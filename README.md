@@ -118,4 +118,5 @@ Contributions, bug reports, and feature requests are welcome!
 
 ## 📄 License
 
-This project is open-source and available under the **MIT License**.
+This project is open-source and available under the [MIT License](LICENSE).  
+**Copyright (c) 2026 Shaik Naseer John Ahmed**
