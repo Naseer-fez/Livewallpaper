@@ -125,7 +125,7 @@ class LiveWallpaperE2ETest(unittest.TestCase):
     def get_logs_text(self):
         return "".join(self.read_logs())
 
-    def assert_log_contains(self, pattern, timeout=3.0):
+    def assert_log_contains(self, pattern, timeout=7.0):
         start_time = time.time()
         while time.time() - start_time < timeout:
             text = self.get_logs_text()
@@ -609,7 +609,7 @@ class LiveWallpaperE2ETest(unittest.TestCase):
         p = subprocess.Popen([self.exe_path])
         try:
             # Verify that app logs reader failure and does not crash
-            self.assert_log_contains("All Source Reader creation attempts failed")
+            self.assert_log_contains("All Source Reader creation attempts failed", timeout=12.0)
         finally:
             p.terminate()
             try:

@@ -144,6 +144,9 @@ void LogW(LogLevel level, const wchar_t* format, ...) {
     localtime_s(&timeinfo, &now);
     wchar_t timeStr[20];
     wcsftime(timeStr, sizeof(timeStr) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &timeinfo);
+    
+    char timeStrA[20];
+    strftime(timeStrA, sizeof(timeStrA), "%Y-%m-%d %H:%M:%S", &timeinfo);
 
     // Format message
     va_list args;
@@ -153,16 +156,23 @@ void LogW(LogLevel level, const wchar_t* format, ...) {
     vswprintf(buf.data(), len, format, args);
     va_end(args);
 
+    // Convert buf to UTF-8
+    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, nullptr, 0, nullptr, nullptr);
+    std::vector<char> utf8Buf(utf8Len > 0 ? utf8Len : 1, 0);
+    if (utf8Len > 0) {
+        WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, utf8Buf.data(), utf8Len, nullptr, nullptr);
+    }
+
     // Output to debug console
     wchar_t debugMsg[1024];
     swprintf_s(debugMsg, L"[%ls] [%ls] %ls\n", timeStr, GetLevelStringW(level), buf.data());
     OutputDebugStringW(debugMsg);
 
-    // Write to file
+    // Write to file as UTF-8 narrow stream
     std::wstring logPath = GetLogFilePath();
     FILE* file = nullptr;
-    if (_wfopen_s(&file, logPath.c_str(), L"a, ccs=UTF-8") == 0 && file) {
-        fwprintf(file, L"[%ls] [%ls] %ls\n", timeStr, GetLevelStringW(level), buf.data());
+    if (_wfopen_s(&file, logPath.c_str(), L"a") == 0 && file) {
+        fprintf(file, "[%s] [%s] %s\n", timeStrA, GetLevelString(level), utf8Buf.data());
         fclose(file);
     }
 

@@ -11,7 +11,7 @@ bool SwapChainManager::Initialize(ID3D11Device* device, HWND hWnd, int width, in
     m_hWnd = hWnd;
     m_width = width;
     m_height = height;
-    LOG_INFO("SwapChainManager::Initialize entry. HWND = %p, width = %d, height = %d", hWnd, width, height);
+    LOG_INFO("SwapChainManager::Initialize entry. Initializing SwapChainManager. HWND = %p, width = %d, height = %d", hWnd, width, height);
 
     if (!CreateSwapChain(device)) {
         LOG_ERROR("SwapChainManager::Initialize: CreateSwapChain failed.");

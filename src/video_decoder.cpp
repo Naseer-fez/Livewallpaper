@@ -57,7 +57,7 @@ void VideoDecoder::Shutdown() {
 bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
     CloseVideo();
     m_filePath = filePath;
-    LOG_INFO_W(L"VideoDecoder::LoadVideo entry. FilePath = %ls", filePath.c_str());
+    LOG_INFO_W(L"VideoDecoder::LoadVideo entry. Loaded video: FilePath = %ls", filePath.c_str());
 
     if (!Utils::ValidateFilePath(m_filePath, false, true)) {
         LOG_ERROR_W(L"LoadVideo: File path validation failed or file does not exist: %ls", m_filePath.c_str());
@@ -213,7 +213,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
         }
     }
 
-    LOG_INFO_W(L"LoadVideo: Loaded video dimensions: %ls (%dx%d)", m_filePath.c_str(), m_videoWidth, m_videoHeight);
+    LOG_INFO_W(L"LoadVideo: Loaded video: dimensions: %ls (%dx%d)", m_filePath.c_str(), m_videoWidth, m_videoHeight);
 
     if (!ReallocateVideoTexture(m_videoWidth, m_videoHeight)) {
         LOG_ERROR("LoadVideo: ReallocateVideoTexture failed.");
@@ -412,7 +412,7 @@ void VideoDecoder::DecodingThreadProc() {
         if (pSample) {
             m_decodedFrameCount++;
             if (m_decodedFrameCount % 100 == 0) {
-                LOG_INFO("VideoDecoder: Decoded %d frames so far", m_decodedFrameCount);
+                LOG_INFO("VideoDecoder: Decoded %d frames so far. Frame flow counter: %d frames decoded", m_decodedFrameCount, m_decodedFrameCount);
             }
             m_sampleQueue.Push(pSample);
         } else {

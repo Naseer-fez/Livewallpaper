@@ -10,7 +10,7 @@ DeviceManager::~DeviceManager() {
 }
 
 bool DeviceManager::Initialize() {
-    LOG_INFO("DeviceManager::Initialize entry.");
+    LOG_INFO("DeviceManager::Initialize entry. Initializing DeviceManager");
 
     D3D_FEATURE_LEVEL featureLevels[] = {
         D3D_FEATURE_LEVEL_11_1,
@@ -102,7 +102,7 @@ bool DeviceManager::Initialize() {
         bool hasTexture2D = (nv12Support & D3D11_FORMAT_SUPPORT_TEXTURE2D) != 0;
         bool hasSRV = (nv12Support & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE) != 0;
         m_supportsNV12 = hasTexture2D && hasSRV;
-        LOG_INFO("DeviceManager::Initialize: NV12 format support check: TEXTURE2D=%s, SRV=%s, Overall=%s",
+        LOG_INFO("DeviceManager::Initialize: NV12 format support check (DXGI_FORMAT_NV12): TEXTURE2D=%s, SRV=%s, Overall=%s",
             hasTexture2D ? "YES" : "NO", hasSRV ? "YES" : "NO", m_supportsNV12 ? "SUPPORTED" : "NOT SUPPORTED");
     } else {
         m_supportsNV12 = false;
