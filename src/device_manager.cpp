@@ -1,6 +1,8 @@
 #include "device_manager.h"
 #include "utils.h"
 
+extern bool g_forceWARP;
+
 DeviceManager::DeviceManager() {}
 
 DeviceManager::~DeviceManager() {
@@ -21,12 +23,17 @@ bool DeviceManager::Initialize() {
 #ifdef _DEBUG
     creationFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
-    
-    LOG_INFO("DeviceManager::Initialize: Attempting Hardware D3D11 device creation. Flags = 0x%08X", creationFlags);
+    D3D_DRIVER_TYPE driverType = D3D_DRIVER_TYPE_HARDWARE;
+    if (g_forceWARP) {
+        driverType = D3D_DRIVER_TYPE_WARP;
+        LOG_WARN("DeviceManager::Initialize: g_forceWARP is true. Forcing WARP driver.");
+    }
+
+    LOG_INFO("DeviceManager::Initialize: Attempting D3D11 device creation. Driver Type = %d, Flags = 0x%08X", driverType, creationFlags);
 
     HRESULT hr = D3D11CreateDevice(
         NULL,
-        D3D_DRIVER_TYPE_HARDWARE,
+        driverType,
         NULL,
         creationFlags,
         featureLevels,
@@ -37,9 +44,9 @@ bool DeviceManager::Initialize() {
         &m_d3dContext
     );
 
-    LOG_INFO("DeviceManager::Initialize: Hardware device creation outcome: HRESULT = 0x%08X, Supported Feature Level = 0x%04X", hr, supportedLevel);
+    LOG_INFO("DeviceManager::Initialize: Device creation outcome: HRESULT = 0x%08X, Supported Feature Level = 0x%04X", hr, supportedLevel);
 
-    if (FAILED(hr)) {
+    if (FAILED(hr) && driverType == D3D_DRIVER_TYPE_HARDWARE) {
         LOG_WARN("Hardware D3D11 Device creation failed (HRESULT: 0x%08X). Falling back to WARP driver...", hr);
         hr = D3D11CreateDevice(
             NULL,

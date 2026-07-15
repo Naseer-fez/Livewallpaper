@@ -31,6 +31,11 @@ int SynchronizationManager::GetFPSLimit() const {
 }
 
 void SynchronizationManager::RequestResize(int width, int height) {
+    if (m_newWidth.load(std::memory_order_acquire) == width &&
+        m_newHeight.load(std::memory_order_acquire) == height &&
+        m_resizeRequested.load(std::memory_order_acquire)) {
+        return;
+    }
     m_newWidth.store(width, std::memory_order_release);
     m_newHeight.store(height, std::memory_order_release);
     m_resizeRequested.store(true, std::memory_order_release);
@@ -60,19 +65,25 @@ bool SynchronizationManager::CheckRecreate(HWND& outHWnd) {
     return false;
 }
 
+void SynchronizationManager::SetDetached(bool detached) {
+    m_isDetached.store(detached, std::memory_order_release);
+}
+
+bool SynchronizationManager::IsDetached() const {
+    return m_isDetached.load(std::memory_order_acquire);
+}
+
 void SynchronizationManager::RequestChangeVideo(const std::wstring& path) {
-    PathMessage* msg = new PathMessage{ path };
-    if (!m_pathQueue.Push(msg)) {
-        delete msg;
-    }
+    auto msg = std::make_unique<PathMessage>();
+    msg->path = path;
+    m_pathQueue.Push(std::move(msg));
 }
 
 bool SynchronizationManager::PopVideoChange(std::wstring& outPath) {
-    PathMessage* msg = nullptr;
+    std::unique_ptr<PathMessage> msg;
     if (m_pathQueue.Pop(msg)) {
         if (msg) {
             outPath = msg->path;
-            delete msg;
             return true;
         }
     }

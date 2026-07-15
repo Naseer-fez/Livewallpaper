@@ -16,7 +16,7 @@ bool Config::Load() {
     wchar_t videoPath[MAX_PATH];
     GetPrivateProfileStringW(L"Settings", L"VideoPath", L"", videoPath, MAX_PATH, path.c_str());
     m_videoPath = videoPath;
-    if (!m_videoPath.empty() && !Utils::ValidateFilePath(m_videoPath, false)) {
+    if (!m_videoPath.empty() && !Utils::ValidateFilePath(m_videoPath, false, false)) {
         LOG_WARN("Config loaded invalid or unsafe VideoPath: %ls. Clearing.", m_videoPath.c_str());
         m_videoPath.clear();
     }
@@ -36,7 +36,7 @@ bool Config::Load() {
         while (end != std::wstring::npos) {
             std::wstring item = playlistStr.substr(start, end - start);
             if (!item.empty()) {
-                if (Utils::ValidateFilePath(item, false)) {
+                if (Utils::ValidateFilePath(item, false, false)) {
                     m_playlist.push_back(item);
                 } else {
                     LOG_WARN("Config loaded invalid or unsafe playlist item: %ls. Skipping.", item.c_str());
@@ -47,7 +47,7 @@ bool Config::Load() {
         }
         std::wstring lastItem = playlistStr.substr(start);
         if (!lastItem.empty()) {
-            if (Utils::ValidateFilePath(lastItem, false)) {
+            if (Utils::ValidateFilePath(lastItem, false, false)) {
                 m_playlist.push_back(lastItem);
             } else {
                 LOG_WARN("Config loaded invalid or unsafe playlist item: %ls. Skipping.", lastItem.c_str());

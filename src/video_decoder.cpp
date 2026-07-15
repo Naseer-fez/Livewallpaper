@@ -1,4 +1,5 @@
 #include "video_decoder.h"
+#include <mferror.h>
 #include "utils.h"
 #include "timer.h"
 #include <chrono>
@@ -27,18 +28,10 @@ bool VideoDecoder::Initialize(ID3D11Device* pDevice) {
         LOG_WARN("VideoDecoder::Initialize: Failed to enable D3D11 multithread protection.");
     }
 
-    hr = MFStartup(MF_VERSION);
-    LOG_INFO("VideoDecoder::Initialize: MFStartup result = 0x%08X", hr);
-    if (FAILED(hr)) {
-        LOG_ERROR("VideoDecoder::Initialize: MFStartup failed. HRESULT: 0x%08X", hr);
-        return false;
-    }
-
     hr = MFCreateDXGIDeviceManager(&m_deviceResetToken, &m_pDeviceManager);
     LOG_INFO("VideoDecoder::Initialize: MFCreateDXGIDeviceManager result = 0x%08X, ResetToken = %u", hr, m_deviceResetToken);
     if (FAILED(hr)) {
         LOG_ERROR("VideoDecoder::Initialize: MFCreateDXGIDeviceManager failed. HRESULT: 0x%08X", hr);
-        MFShutdown();
         return false;
     }
 
@@ -47,7 +40,6 @@ bool VideoDecoder::Initialize(ID3D11Device* pDevice) {
     if (FAILED(hr)) {
         LOG_ERROR("VideoDecoder::Initialize: IMFDXGIDeviceManager::ResetDevice failed. HRESULT: 0x%08X", hr);
         m_pDeviceManager.Reset();
-        MFShutdown();
         return false;
     }
 
@@ -59,7 +51,6 @@ void VideoDecoder::Shutdown() {
     CloseVideo();
     m_pDeviceManager.Reset();
     m_pDevice = nullptr;
-    MFShutdown();
     LOG_INFO("VideoDecoder shut down successfully.");
 }
 
@@ -67,6 +58,12 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
     CloseVideo();
     m_filePath = filePath;
     LOG_INFO_W(L"VideoDecoder::LoadVideo entry. FilePath = %ls", filePath.c_str());
+
+    if (!Utils::ValidateFilePath(m_filePath, false, true)) {
+        LOG_ERROR_W(L"LoadVideo: File path validation failed or file does not exist: %ls", m_filePath.c_str());
+        LOG_ERROR("LoadVideo: All Source Reader creation attempts failed for path: %ls", m_filePath.c_str());
+        return false;
+    }
 
     struct FallbackOption {
         const char* name;
@@ -166,13 +163,14 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
             continue;
         }
 
-        LOG_INFO("LoadVideo: Success using combination '%s'", opt.name);
+        LOG_INFO("LoadVideo: Success using combination '%s'. Successfully created Source Reader.", opt.name);
         initialized = true;
         break;
     }
 
     if (!initialized || !m_pSourceReader) {
         LOG_ERROR_W(L"LoadVideo: All Source Reader creation attempts failed for path: %ls", m_filePath.c_str());
+        CloseVideo();
         return false;
     }
 
@@ -182,6 +180,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
     LOG_INFO("LoadVideo: GetCurrentMediaType result = 0x%08X", hr);
     if (FAILED(hr)) {
         LOG_ERROR("LoadVideo: GetCurrentMediaType failed. HRESULT: 0x%08X", hr);
+        CloseVideo();
         return false;
     }
 
@@ -190,6 +189,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
     LOG_INFO("LoadVideo: MFGetAttributeSize result = 0x%08X. Width = %u, Height = %u", hr, width, height);
     if (FAILED(hr)) {
         LOG_ERROR("LoadVideo: MFGetAttributeSize failed. HRESULT: 0x%08X", hr);
+        CloseVideo();
         return false;
     }
 
@@ -217,6 +217,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
 
     if (!ReallocateVideoTexture(m_videoWidth, m_videoHeight)) {
         LOG_ERROR("LoadVideo: ReallocateVideoTexture failed.");
+        CloseVideo();
         return false;
     }
 
@@ -277,10 +278,6 @@ void VideoDecoder::SetPaused(bool paused) {
 }
 
 bool VideoDecoder::ReallocateVideoTexture(int width, int height) {
-    m_pVideoSRV_Y.Reset();
-    m_pVideoSRV_UV.Reset();
-    m_pVideoTexture.Reset();
-
     D3D11_TEXTURE2D_DESC desc = {};
     desc.Width = width;
     desc.Height = height;
@@ -294,7 +291,8 @@ bool VideoDecoder::ReallocateVideoTexture(int width, int height) {
     desc.CPUAccessFlags = 0;
     desc.MiscFlags = 0;
 
-    HRESULT hr = m_pDevice->CreateTexture2D(&desc, nullptr, &m_pVideoTexture);
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> pNewTexture;
+    HRESULT hr = m_pDevice->CreateTexture2D(&desc, nullptr, &pNewTexture);
     if (FAILED(hr)) {
         LOG_ERROR("ReallocateVideoTexture CreateTexture2D failed. HRESULT: 0x%08X", hr);
         return false;
@@ -306,7 +304,8 @@ bool VideoDecoder::ReallocateVideoTexture(int width, int height) {
     srvDescY.Texture2D.MipLevels = 1;
     srvDescY.Texture2D.MostDetailedMip = 0;
 
-    hr = m_pDevice->CreateShaderResourceView(m_pVideoTexture.Get(), &srvDescY, &m_pVideoSRV_Y);
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> pNewSRV_Y;
+    hr = m_pDevice->CreateShaderResourceView(pNewTexture.Get(), &srvDescY, &pNewSRV_Y);
     if (FAILED(hr)) {
         LOG_ERROR("ReallocateVideoTexture CreateShaderResourceView Y failed. HRESULT: 0x%08X", hr);
         return false;
@@ -318,12 +317,16 @@ bool VideoDecoder::ReallocateVideoTexture(int width, int height) {
     srvDescUV.Texture2D.MipLevels = 1;
     srvDescUV.Texture2D.MostDetailedMip = 0;
 
-    hr = m_pDevice->CreateShaderResourceView(m_pVideoTexture.Get(), &srvDescUV, &m_pVideoSRV_UV);
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> pNewSRV_UV;
+    hr = m_pDevice->CreateShaderResourceView(pNewTexture.Get(), &srvDescUV, &pNewSRV_UV);
     if (FAILED(hr)) {
         LOG_ERROR("ReallocateVideoTexture CreateShaderResourceView UV failed. HRESULT: 0x%08X", hr);
         return false;
     }
 
+    m_pVideoTexture = pNewTexture;
+    m_pVideoSRV_Y = pNewSRV_Y;
+    m_pVideoSRV_UV = pNewSRV_UV;
     m_videoTextureWidth = width;
     m_videoTextureHeight = height;
 
@@ -378,18 +381,13 @@ void VideoDecoder::DecodingThreadProc() {
             &pSample
         );
 
-        if (FAILED(hr)) {
-            LOG_ERROR("ReadSample failed. HRESULT: 0x%08X", hr);
-            Timer::PreciseSleep(10.0);
-            continue;
-        }
-
-        // Loop playbacks automatically when we reach the end of stream
-        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+        bool isEos = (hr == MF_E_END_OF_STREAM) || (flags & MF_SOURCE_READERF_ENDOFSTREAM);
+        if (isEos) {
             LOG_INFO("Reached end of video stream. Looping...");
             
             // Flush decoder pipeline to release DXVA2 buffers and prevent VRAM accumulation
             m_pSourceReader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+            m_sampleQueue.Clear();
 
             PROPVARIANT var;
             PropVariantInit(&var);
@@ -405,16 +403,18 @@ void VideoDecoder::DecodingThreadProc() {
             continue;
         }
 
+        if (FAILED(hr)) {
+            LOG_ERROR("ReadSample failed. HRESULT: 0x%08X", hr);
+            Timer::PreciseSleep(10.0);
+            continue;
+        }
+
         if (pSample) {
             m_decodedFrameCount++;
             if (m_decodedFrameCount % 100 == 0) {
                 LOG_INFO("VideoDecoder: Decoded %d frames so far", m_decodedFrameCount);
             }
-            IMFSample* pRawSample = pSample.Detach();
-            if (!m_sampleQueue.Push(pRawSample)) {
-                // If queue push fails, release the sample to prevent leak
-                pRawSample->Release();
-            }
+            m_sampleQueue.Push(pSample);
         } else {
             // Null sample without end-of-stream is suspicious
             LOG_WARN("VideoDecoder: ReadSample returned null sample without EOS. Flags = 0x%08X", flags);
@@ -466,9 +466,9 @@ bool VideoDecoder::UpdateFrame(ID3D11DeviceContext* pContext, double& outWaitTim
             LOG_INFO("UpdateFrame: First sample identified. sampleTimeMs = %.2f ms", sampleTimeMs);
             m_playbackTimeMs = sampleTimeMs;
             m_currentFrameTimestamp = sampleTimeMs;
-            IMFSample* poppedSample = nullptr;
+            Microsoft::WRL::ComPtr<IMFSample> poppedSample;
             if (m_sampleQueue.Pop(poppedSample)) {
-                pSelectedSample.Attach(poppedSample);
+                pSelectedSample = std::move(poppedSample);
                 hasNewFrame = true;
             }
             continue;
@@ -478,9 +478,9 @@ bool VideoDecoder::UpdateFrame(ID3D11DeviceContext* pContext, double& outWaitTim
             LOG_INFO("UpdateFrame: Video loop detected. Resetting playback timeline. new sampleTimeMs = %.2f ms, previous = %.2f ms", sampleTimeMs, m_currentFrameTimestamp);
             m_playbackTimeMs = sampleTimeMs;
             m_currentFrameTimestamp = sampleTimeMs;
-            IMFSample* poppedSample = nullptr;
+            Microsoft::WRL::ComPtr<IMFSample> poppedSample;
             if (m_sampleQueue.Pop(poppedSample)) {
-                pSelectedSample.Attach(poppedSample);
+                pSelectedSample = std::move(poppedSample);
                 hasNewFrame = true;
             }
             continue;
@@ -488,9 +488,9 @@ bool VideoDecoder::UpdateFrame(ID3D11DeviceContext* pContext, double& outWaitTim
 
         if (m_playbackTimeMs >= sampleTimeMs) {
             m_currentFrameTimestamp = sampleTimeMs;
-            IMFSample* poppedSample = nullptr;
+            Microsoft::WRL::ComPtr<IMFSample> poppedSample;
             if (m_sampleQueue.Pop(poppedSample)) {
-                pSelectedSample.Attach(poppedSample);
+                pSelectedSample = std::move(poppedSample);
                 hasNewFrame = true;
             }
         } else {

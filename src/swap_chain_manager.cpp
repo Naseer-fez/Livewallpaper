@@ -117,6 +117,7 @@ bool SwapChainManager::CreateSwapChain(ID3D11Device* device) {
     DXGI_SWAP_CHAIN_DESC1 actualDesc = {};
     HRESULT hrDesc = m_swapChain->GetDesc1(&actualDesc);
     if (SUCCEEDED(hrDesc)) {
+        m_bufferCount = actualDesc.BufferCount;
         if (actualDesc.Width == 0 || actualDesc.Height == 0) {
             LOG_WARN("SwapChainManager: Created swap chain has zero-size back buffer! Width=%u, Height=%u", actualDesc.Width, actualDesc.Height);
         } else {
@@ -171,7 +172,7 @@ bool SwapChainManager::Resize(ID3D11Device* device, ID3D11DeviceContext* context
     m_renderTargetView.Reset();
 
     HRESULT hr = m_swapChain->ResizeBuffers(
-        2, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, 0
+        m_bufferCount, width, height, DXGI_FORMAT_R8G8B8A8_UNORM, 0
     );
     LOG_INFO("Resize: SwapChain->ResizeBuffers result = 0x%08X", hr);
 

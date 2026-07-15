@@ -23,6 +23,8 @@ DEFINE_GUID(GUID_ACDC_POWER_SOURCE, 0x5D3E9A59, 0xE9D5, 0x4B00, 0xA6, 0xBD, 0xFF
 DEFINE_GUID(GUID_CONSOLE_DISPLAY_STATE, 0x6FE69556, 0x704A, 0x47A0, 0x8F, 0x24, 0xC2, 0x8D, 0x93, 0x6F, 0xDA, 0x47);
 #endif
 
+extern bool g_isHeadlessTest;
+
 PowerMonitor::PowerMonitor() {}
 
 PowerMonitor::~PowerMonitor() {
@@ -98,6 +100,9 @@ void PowerMonitor::SetPauseCallback(std::function<void(bool)> callback) {
 
 void PowerMonitor::EvaluatePowerState() {
     bool shouldPause = m_isOnBattery || m_isDisplayOff || m_isFullscreenAppRunning || m_isUserIdle || m_isObscured;
+    if (g_isHeadlessTest) {
+        shouldPause = false;
+    }
     if (m_pauseCallback) {
         m_pauseCallback(shouldPause);
     }
@@ -200,7 +205,7 @@ LRESULT CALLBACK PowerMonitor::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
         
         if (setting->PowerSetting == GUID_ACDC_POWER_SOURCE && setting->DataLength == sizeof(int)) {
             int acStatus = *reinterpret_cast<int*>(setting->Data);
-            pThis->m_isOnBattery = (acStatus == 0); // 0 = battery, 1 = AC, 2 = UPS
+            pThis->m_isOnBattery = (acStatus == 1); // 0 = AC (PoAc), 1 = Battery (PoDc), 2 = UPS (PoHot)
             LOG_INFO("Power state changed. Is on battery: %d", pThis->m_isOnBattery);
             pThis->EvaluatePowerState();
         } 

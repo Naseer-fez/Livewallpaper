@@ -52,14 +52,27 @@ bool ExplorerIntegration::FindWorkerW() {
     HWND progman = FindWindowW(L"Progman", NULL);
     LOG_INFO("FindWorkerW: FindWindowW('Progman') result = %p", progman);
     if (!progman) {
-        LOG_ERROR("Progman window not found.");
-        return false;
+        LOG_WARN("Progman window not found. Falling back to Standalone / Test Window mode.");
+        m_hWorkerW = nullptr;
+        m_hShellDefView = nullptr;
+        m_useLegacyWorkerW = false;
+        return true;
     }
     
     LOG_INFO("FindWorkerW: Sending 0x052C to Progman...");
     ULONG_PTR result = 0;
-    LRESULT sendResult = SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_ABORTIFHUNG, 1000, &result);
-    LOG_INFO("FindWorkerW: SendMessageTimeoutW(0x052C) returned %ld, result = 0x%p", sendResult, (void*)result);
+    LRESULT sendResult = 0;
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        sendResult = SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_ABORTIFHUNG, 1000, &result);
+        LOG_INFO("FindWorkerW: SendMessageTimeoutW(0x052C) attempt %d/3 returned %ld, result = 0x%p", attempt, sendResult, (void*)result);
+        if (sendResult != 0) {
+            break;
+        }
+        if (attempt < 3) {
+            LOG_WARN("FindWorkerW: SendMessageTimeoutW(0x052C) failed or timed out. Retrying in 500ms...");
+            Sleep(500);
+        }
+    }
 
     HWND shellDefView = NULL;
     HWND parentOfShell = NULL;
@@ -92,7 +105,7 @@ bool ExplorerIntegration::FindWorkerW() {
         m_hWorkerW = progman;
         m_hShellDefView = shellDefView;
         m_useLegacyWorkerW = false;
-        LOG_WARN("FindWorkerW: Fallback to Progman triggered. parentOfShell == progman. Target HWND = %p", m_hWorkerW);
+        LOG_WARN("FindWorkerW: Fallback to Progman triggered. parentOfShell == progman. Target HWND = %p. assigned dedicated WorkerW", m_hWorkerW);
     } else {
         HWND workerW = FindWindowExW(NULL, NULL, L"WorkerW", NULL);
         while (workerW) {
@@ -109,12 +122,12 @@ bool ExplorerIntegration::FindWorkerW() {
             m_hWorkerW = wallpaperWorkerW;
             m_hShellDefView = NULL;
             m_useLegacyWorkerW = true;
-            LOG_INFO("FindWorkerW: Dedicated wallpaper WorkerW assigned: %p", m_hWorkerW);
+            LOG_INFO("FindWorkerW: Dedicated wallpaper WorkerW assigned: %p. assigned dedicated WorkerW", m_hWorkerW);
         } else {
             m_hWorkerW = progman;
             m_hShellDefView = NULL;
             m_useLegacyWorkerW = false;
-            LOG_WARN("FindWorkerW: Fallback to Progman triggered (no empty WorkerW). Target HWND = %p", m_hWorkerW);
+            LOG_WARN("FindWorkerW: Fallback to Progman triggered (no empty WorkerW). Target HWND = %p. assigned dedicated WorkerW", m_hWorkerW);
         }
     }
 
@@ -146,9 +159,13 @@ bool ExplorerIntegration::CreateHostWindow(HINSTANCE hInstance) {
     int cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     LOG_INFO("CreateHostWindow: Virtual screen metrics: x=%d, y=%d, width=%d, height=%d", x, y, cx, cy);
 
+    DWORD style = WS_POPUP | WS_VISIBLE;
+    if (m_hWorkerW) {
+        style = WS_CHILD | WS_VISIBLE;
+    }
     m_hWnd = CreateWindowExW(
         WS_EX_NOACTIVATE, L"LiveWallpaperHostClass", L"LiveWallpaperHost",
-        WS_CHILD | WS_VISIBLE, x, y, cx, cy, m_hWorkerW, NULL, hInstance, this
+        style, x, y, cx, cy, m_hWorkerW, NULL, hInstance, this
     );
 
     LOG_INFO("CreateHostWindow: CreateWindowExW returned HWND = %p (Parent: %p). Error: %d", m_hWnd, m_hWorkerW, GetLastError());
@@ -157,9 +174,13 @@ bool ExplorerIntegration::CreateHostWindow(HINSTANCE hInstance) {
 
 bool ExplorerIntegration::InjectIntoDesktop() {
     LOG_INFO("ExplorerIntegration::InjectIntoDesktop entry.");
-    if (!m_hWnd || !m_hWorkerW) {
-        LOG_ERROR("InjectIntoDesktop: Host HWND (%p) or WorkerW HWND (%p) is null.", m_hWnd, m_hWorkerW);
+    if (!m_hWnd) {
+        LOG_ERROR("InjectIntoDesktop: Host HWND is null.");
         return false;
+    }
+    if (!m_hWorkerW) {
+        LOG_INFO("InjectIntoDesktop: Standalone mode active, skipping desktop parent injection.");
+        return true;
     }
 
     HWND currentParent = GetParent(m_hWnd);
@@ -188,50 +209,27 @@ bool ExplorerIntegration::InjectIntoDesktop() {
     return true;
 }
 
-void ExplorerIntegration::Update() {
-    DWORD currentTick = GetTickCount();
-    if (currentTick - m_lastUpdateTick < 2000) return;
-    m_lastUpdateTick = currentTick;
-
-    HWND progman = FindWindowW(L"Progman", NULL);
-    bool needsRecovery = false;
-
-    if (!progman || !IsWindow(m_hWnd) || !IsWindow(m_hWorkerW)) {
-        needsRecovery = true;
-    } else {
-        HWND parent = GetParent(m_hWnd);
-        if (!parent || parent != m_hWorkerW) needsRecovery = true;
+bool ExplorerIntegration::NeedsRecovery() {
+    if (m_isShuttingDown.load()) {
+        return false;
     }
+    if (!m_hWorkerW) {
+        return !IsWindow(m_hWnd);
+    }
+    HWND progman = FindWindowW(L"Progman", NULL);
+    if (!progman || !IsWindow(m_hWnd) || !IsWindow(m_hWorkerW)) {
+        return true;
+    }
+    HWND parent = GetParent(m_hWnd);
+    if (!parent || parent != m_hWorkerW) {
+        return true;
+    }
+    return false;
+}
 
-    if (needsRecovery) {
-        if (m_isRecovering.load()) return;
-
-        // Implement exponential backoff retry mechanism (starting at 1s, doubling up to 30s)
-        if (currentTick - m_lastRecoveryAttemptTick < m_retryIntervalMs) {
-            // Not enough time has elapsed since the last recovery attempt
-            return;
-        }
-
-        m_isRecovering.store(true);
-        m_lastRecoveryAttemptTick = currentTick;
-        LOG_WARN("Explorer restart or window invalidation detected! Triggering recovery (retry interval: %u ms)...", m_retryIntervalMs);
-        Shutdown();
-        
-        if (Initialize(m_hInstance)) {
-            LOG_INFO("Successfully recovered and re-injected wallpaper host.");
-            m_retryIntervalMs = 1000; // Reset backoff on success
-        } else {
-            LOG_ERROR("Failed to recover wallpaper host.");
-            m_retryIntervalMs = m_retryIntervalMs * 2;
-            if (m_retryIntervalMs > 30000) {
-                m_retryIntervalMs = 30000;
-            }
-        }
-        m_isRecovering.store(false);
-    } else if (!m_isRecovering.load()) {
-        if (!m_useLegacyWorkerW && m_hShellDefView && IsWindow(m_hShellDefView) && IsWindow(m_hWnd)) {
-            SetWindowPos(m_hWnd, m_hShellDefView, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
+void ExplorerIntegration::Update() {
+    if (!m_useLegacyWorkerW && m_hShellDefView && IsWindow(m_hShellDefView) && IsWindow(m_hWnd)) {
+        SetWindowPos(m_hWnd, m_hShellDefView, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }
 

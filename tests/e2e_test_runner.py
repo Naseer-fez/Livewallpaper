@@ -140,7 +140,23 @@ class LiveWallpaperE2ETest(unittest.TestCase):
             self.fail(f"Pattern '{pattern}' was found in log file but should not be.\nLog content:\n{text}")
 
     def find_host_hwnd(self):
-        return user32.FindWindowW("LiveWallpaperHostClass", "LiveWallpaperHost")
+        hwnd = user32.FindWindowW("LiveWallpaperHostClass", "LiveWallpaperHost")
+        if hwnd:
+            return hwnd
+        progman = user32.FindWindowW("Progman", None)
+        if progman:
+            hwnd = user32.FindWindowExW(progman, 0, "LiveWallpaperHostClass", "LiveWallpaperHost")
+            if hwnd:
+                return hwnd
+        worker = 0
+        while True:
+            worker = user32.FindWindowExW(0, worker, "WorkerW", None)
+            if not worker:
+                break
+            hwnd = user32.FindWindowExW(worker, 0, "LiveWallpaperHostClass", "LiveWallpaperHost")
+            if hwnd:
+                return hwnd
+        return 0
 
     # ==========================================
     # TIER 1 - FEATURE COVERAGE (HAPPY PATH)

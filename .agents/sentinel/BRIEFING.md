@@ -1,20 +1,21 @@
-# BRIEFING — 2026-06-15T14:42:02Z
+# BRIEFING — 2026-07-15T15:59:13Z
 
 ## Mission
-Orchestrate and monitor the Live Wallpaper Engine debugging project, ensuring comprehensive diagnostics, robustness, hardening, resilience, and diagnostic tool are implemented and verified via independent audit.
+Implement the critical, high, and medium severity fixes identified in the independent code review of the LiveWallpaper C++ and Rust project to resolve memory leaks, thread safety issues, window recreation crashes, and CPU/GPU polling issues.
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: d:\CODE\Utlities\LiveWallpaper\.agents\sentinel
 - Orchestrator: 0362a8af-fff0-4661-b3ad-98279b9630b7
 - Victory Auditor: TBD
+- Active Orchestrator: faf3f5bc-b221-4464-ba29-83f463c2dfda
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
 - Victory Audit is MANDATORY before reporting completion
 
 ## User Context
-- **Last user request**: Debug target machine rendering failures by adding diagnostics, hardening D3D11/MF pipelines, making WorkerW robust, and adding a `--diagnose` command.
+- **Last user request**: Implement the critical, high, and medium severity fixes (memory leaks, thread safety, window recreation, resize polling, FFI error visibility & security).
 - **Pending clarifications**: none
 - **Delivered results**: none
 
@@ -28,3 +29,4 @@ Orchestrate and monitor the Live Wallpaper Engine debugging project, ensuring co
 
 ## Artifact Index
 - d:\CODE\Utlities\LiveWallpaper\.agents\ORIGINAL_REQUEST.md — Authoritative record of user requests.
+

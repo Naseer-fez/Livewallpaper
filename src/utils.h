@@ -17,7 +17,7 @@ void ShutdownLogging();
 void Log(LogLevel level, const char* format, ...);
 void LogW(LogLevel level, const wchar_t* format, ...);
 
-bool ValidateFilePath(const std::wstring& path, bool expectRelative = false);
+bool ValidateFilePath(const std::wstring& path, bool expectRelative = false, bool checkExistence = true);
 
 // COM Helper for checking HRESULT
 inline void LogIfFailed(HRESULT hr, const char* context) {

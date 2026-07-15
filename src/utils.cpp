@@ -209,7 +209,7 @@ std::wstring FindFallbackVideo() {
     return L"";
 }
 
-bool ValidateFilePath(const std::wstring& path, bool expectRelative) {
+bool ValidateFilePath(const std::wstring& path, bool expectRelative, bool checkExistence) {
     if (path.empty() || path.length() >= MAX_PATH) return false;
     
     // Reject traversal sequences to prevent directory traversal
@@ -271,9 +271,11 @@ bool ValidateFilePath(const std::wstring& path, bool expectRelative) {
         return false;
     }
     
-    DWORD attributes = GetFileAttributesW(absPath);
-    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        return false;
+    if (checkExistence) {
+        DWORD attributes = GetFileAttributesW(absPath);
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            return false;
+        }
     }
     
     return true;

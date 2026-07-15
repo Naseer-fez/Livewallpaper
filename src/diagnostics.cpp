@@ -28,7 +28,7 @@ static void WriteLine(FILE* f, const char* format, ...) {
 
     printf("%s\n", buf);
     if (f) {
-        fprintf(f, "%s\n", buf);
+        fwprintf(f, L"%hs\n", buf);
     }
 }
 
@@ -60,16 +60,25 @@ static const char* FeatureLevelToString(D3D_FEATURE_LEVEL fl) {
 }
 
 bool RunDiagnosticReport() {
-    // Attach to parent console for stdout output (WinMain apps don't have a console by default)
     bool allocatedConsole = false;
-    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-        if (AllocConsole()) {
-            allocatedConsole = true;
+    bool isRedirected = false;
+    HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hStdOut != INVALID_HANDLE_VALUE && hStdOut != nullptr) {
+        DWORD fileType = GetFileType(hStdOut);
+        if (fileType == FILE_TYPE_DISK || fileType == FILE_TYPE_PIPE) {
+            isRedirected = true;
         }
     }
-    // Redirect stdout to the console
-    FILE* conOut = nullptr;
-    freopen_s(&conOut, "CONOUT$", "w", stdout);
+
+    if (!isRedirected) {
+        if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+            if (AllocConsole()) {
+                allocatedConsole = true;
+            }
+        }
+        FILE* conOut = nullptr;
+        freopen_s(&conOut, "CONOUT$", "w", stdout);
+    }
 
     // Open output file
     std::wstring reportPath = Utils::GetAppDataPath();
@@ -77,7 +86,7 @@ bool RunDiagnosticReport() {
     reportPath += L"\\diagnostic_report.txt";
 
     FILE* f = nullptr;
-    _wfopen_s(&f, reportPath.c_str(), L"w");
+    _wfopen_s(&f, reportPath.c_str(), L"w, ccs=UTF-8");
 
     // Header
     time_t now = time(nullptr);
@@ -105,7 +114,7 @@ bool RunDiagnosticReport() {
             auto pRtlGetVersion = (RtlGetVersionFn)GetProcAddress(hNtDll, "RtlGetVersion");
             if (pRtlGetVersion) {
                 pRtlGetVersion((PRTL_OSVERSIONINFOW)&osvi);
-                WriteLine(f, "  Version: %d.%d.%d", osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
+                WriteLine(f, "  OS version: %d.%d.%d", osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber);
                 WriteLine(f, "  Product Type: %s",
                     osvi.wProductType == VER_NT_WORKSTATION ? "Workstation" :
                     osvi.wProductType == VER_NT_SERVER ? "Server" : "Domain Controller");
@@ -132,6 +141,7 @@ bool RunDiagnosticReport() {
 
     // ---- Section 2: GPU Adapters ----
     WriteLine(f, "--- GPU ADAPTERS ---");
+    WriteLine(f, "  GPU details:");
     {
         Microsoft::WRL::ComPtr<IDXGIFactory1> dxgiFactory;
         HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&dxgiFactory));
@@ -230,6 +240,7 @@ bool RunDiagnosticReport() {
 
     // ---- Section 4: Media Foundation Codecs ----
     WriteLine(f, "--- MEDIA FOUNDATION CODECS ---");
+    WriteLine(f, "  MF decoders:");
     {
         HRESULT hr = MFStartup(MF_VERSION);
         if (SUCCEEDED(hr)) {

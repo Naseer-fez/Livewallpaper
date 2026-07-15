@@ -10,6 +10,7 @@ public:
     bool Initialize(HINSTANCE hInstance);
     void Shutdown();
     void Update();
+    bool NeedsRecovery();
 
     HWND GetHWND() const { return m_hWnd; }
 

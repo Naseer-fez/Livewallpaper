@@ -134,8 +134,8 @@ void TrayIcon::UpdateRotationInterval(int minutes) {
     m_rotationIntervalMinutes = minutes;
 }
 
-void TrayIcon::UpdateHasPlaylist(bool hasPlaylist) {
-    m_hasPlaylist = hasPlaylist;
+void TrayIcon::UpdatePlaylistSize(size_t size) {
+    m_playlistSize = size;
 }
 
 void TrayIcon::UpdateFPSLimit(int fps) {
@@ -151,7 +151,7 @@ void TrayIcon::ShowContextMenu() {
     InsertMenuW(hPlaylistMenu, -1, MF_BYPOSITION | MF_STRING, IDM_PLAYLIST_ADD, L"Add Video...");
     
     UINT nextFlags = MF_BYPOSITION | MF_STRING;
-    if (!m_hasPlaylist) {
+    if (m_playlistSize <= 1) {
         nextFlags |= MF_GRAYED;
     }
     InsertMenuW(hPlaylistMenu, -1, nextFlags, IDM_PLAYLIST_NEXT, L"Next Video");

@@ -18,6 +18,22 @@ bool FFIShaderBridge::Load() {
         size_t pos = path.find_last_of(L"\\/");
         if (pos != std::wstring::npos) {
             std::wstring dllPath = path.substr(0, pos) + L"\\live_wallpaper_rust.dll";
+            
+            // Security checks: absolute path, no '..' traversal, file exists
+            if (dllPath.length() < 3 || dllPath[1] != L':' || dllPath[2] != L'\\') {
+                LOG_ERROR("DLL path is not absolute: %ls", dllPath.c_str());
+                return false;
+            }
+            if (dllPath.find(L"..") != std::wstring::npos) {
+                LOG_ERROR("DLL path contains invalid directory traversal components: %ls", dllPath.c_str());
+                return false;
+            }
+            DWORD dwAttrib = GetFileAttributesW(dllPath.c_str());
+            if (dwAttrib == INVALID_FILE_ATTRIBUTES || (dwAttrib & FILE_ATTRIBUTE_DIRECTORY)) {
+                LOG_ERROR("DLL file does not exist or is a directory: %ls", dllPath.c_str());
+                return false;
+            }
+
             // Exclusively load from the application directory, restricting dependency searches there too
             m_rustDll = LoadLibraryExW(dllPath.c_str(), NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
         }
@@ -52,9 +68,9 @@ void FFIShaderBridge::Unload() {
     m_shutdownShaderHost = nullptr;
 }
 
-HRESULT FFIShaderBridge::InitShaderHost(ID3D11Device* device, ID3D11DeviceContext* context, const std::wstring& path, void** host_out) {
+HRESULT FFIShaderBridge::InitShaderHost(ID3D11Device* device, ID3D11DeviceContext* context, const std::wstring& path, wchar_t* out_error_buffer, unsigned int error_buffer_len, void** host_out) {
     if (!m_initShaderHost) return E_POINTER;
-    return m_initShaderHost((void*)device, (void*)context, path.c_str(), host_out);
+    return m_initShaderHost((void*)device, (void*)context, path.c_str(), out_error_buffer, error_buffer_len, host_out);
 }
 
 HRESULT FFIShaderBridge::RenderShaderFrame(void* host, ID3D11RenderTargetView* rtv, int width, int height, float mouseX, float mouseY, bool isMouseDown, const float* audioData, int audioLen) {

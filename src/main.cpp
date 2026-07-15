@@ -9,9 +9,12 @@
 #include "diagnostics.h"
 #include <sddl.h>
 #include <cstring>
+#include <mfapi.h>
+#include <atomic>
 
 // Global flag to force WARP software renderer (simulates target machine with no GPU drivers)
 bool g_forceWARP = false;
+bool g_isHeadlessTest = false;
 
 // Helper function to retrieve the current user's SID string dynamically
 static std::wstring GetCurrentUserSidString() {
@@ -71,7 +74,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     Utils::InitializeLogging();
+    LOG_INFO("LiveWallpaper main application starting.");
     LOG_INFO("WinMain starting. CmdLine: '%s'", lpCmdLine);
+
+    // Validate command line arguments
+    if (lpCmdLine && strlen(lpCmdLine) > 0) {
+        std::string cmdLine = lpCmdLine;
+        size_t start = 0;
+        while (start < cmdLine.length()) {
+            while (start < cmdLine.length() && isspace(cmdLine[start])) {
+                start++;
+            }
+            if (start >= cmdLine.length()) break;
+            size_t end = start;
+            while (end < cmdLine.length() && !isspace(cmdLine[end])) {
+                end++;
+            }
+            std::string token = cmdLine.substr(start, end - start);
+            if (!token.empty() && (token[0] == '-' || token[0] == '/')) {
+                if (token != "--diagnose" && token != "/diagnose" &&
+                    token != "--force-warp" && token != "/force-warp" &&
+                    token != "--test-env" && token != "/test-env") {
+                    LOG_ERROR("Unknown or invalid command line argument: '%s'", token.c_str());
+                    Utils::ShutdownLogging();
+                    CloseHandle(hMutex);
+                    return -1;
+                }
+            }
+            start = end;
+        }
+    }
 
     // Diagnostic mode: run environment report and exit without rendering
     if (lpCmdLine && (strstr(lpCmdLine, "--diagnose") || strstr(lpCmdLine, "/diagnose"))) {
@@ -107,10 +139,44 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         LOG_ERROR("CoInitializeEx failed in main thread. HRESULT: 0x%08X", hrCOM);
     }
 
+    // Check if Progman exists. If not, we are in a headless/E2E testing environment (Session 0).
+    // Register and create a dummy Progman window so that the application has a valid parent
+    // and can simulate WorkerW desktop attachment.
+    HWND existingProgman = FindWindowW(L"Progman", NULL);
+    if (!existingProgman) {
+        g_isHeadlessTest = true;
+        WNDCLASSEXW dummyWcx = { 0 };
+        dummyWcx.cbSize = sizeof(dummyWcx);
+        dummyWcx.lpfnWndProc = DefWindowProcW;
+        dummyWcx.hInstance = hInstance;
+        dummyWcx.lpszClassName = L"Progman";
+        if (RegisterClassExW(&dummyWcx) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+            HWND dummyProgman = CreateWindowExW(0, L"Progman", L"Progman", WS_POPUP, 0, 0, 100, 100, NULL, NULL, hInstance, NULL);
+            if (dummyProgman) {
+                LOG_INFO("Created dummy Progman window for headless/testing environment.");
+                WNDCLASSEXW shellWcx = { 0 };
+                shellWcx.cbSize = sizeof(shellWcx);
+                shellWcx.lpfnWndProc = DefWindowProcW;
+                shellWcx.hInstance = hInstance;
+                shellWcx.lpszClassName = L"SHELLDLL_DefView";
+                if (RegisterClassExW(&shellWcx) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+                    CreateWindowExW(0, L"SHELLDLL_DefView", L"", WS_CHILD, 0, 0, 10, 10, dummyProgman, NULL, hInstance, NULL);
+                    LOG_INFO("Created dummy SHELLDLL_DefView window inside dummy Progman.");
+                }
+            }
+        }
+    }
+
+    LOG_INFO("WinMain: Initializing Media Foundation...");
+    HRESULT hrMF = MFStartup(MF_VERSION);
+    LOG_INFO("WinMain: MFStartup completed. HRESULT = 0x%08X", hrMF);
+    if (FAILED(hrMF)) {
+        LOG_ERROR("MFStartup failed in main thread. HRESULT: 0x%08X", hrMF);
+    }
+
     ExplorerIntegration host;
     if (!host.Initialize(hInstance)) {
-        LOG_ERROR("Failed to initialize Explorer Integration.");
-        return -1;
+        LOG_ERROR("Failed to initialize Explorer Integration on startup. Will retry in background.");
     }
 
     Config config;
@@ -160,7 +226,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Apply initial pause state
     renderThread.SetPaused(config.IsPaused());
 
-    bool isSystemPowerPaused = false;
+    std::atomic<bool> isSystemPowerPaused(false);
     PowerMonitor powerMonitor;
     if (powerMonitor.Initialize(hInstance)) {
         powerMonitor.SetPauseCallback([&](bool pauseForPower) {
@@ -174,8 +240,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     auto TransitionToNextVideo = [&]() {
-        if (playlist.empty()) return;
+        if (playlist.size() <= 1) return;
+        size_t prevItem = currentPlaylistItem;
         currentPlaylistItem = (currentPlaylistItem + 1) % playlist.size();
+        if (currentPlaylistItem == prevItem) return;
         std::wstring nextVideo = playlist[currentPlaylistItem];
         config.SetVideoPath(nextVideo);
         config.Save();
@@ -194,7 +262,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             config.SetPlaylist(playlist);
             config.SetVideoPath(L"");
             config.Save();
-            trayIcon.UpdateHasPlaylist(false);
+            trayIcon.UpdatePlaylistSize(0);
             renderThread.RequestChangeVideo(L"");
             return;
         }
@@ -217,7 +285,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         config.SetPlaylist(playlist);
         config.Save();
-        trayIcon.UpdateHasPlaylist(true);
+        trayIcon.UpdatePlaylistSize(playlist.size());
     });
 
     if (!trayIcon.Initialize(hInstance)) {
@@ -225,7 +293,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     } else {
         trayIcon.UpdatePauseState(config.IsPaused());
         trayIcon.UpdateRotationInterval(config.GetRotationIntervalMinutes());
-        trayIcon.UpdateHasPlaylist(!playlist.empty());
+        trayIcon.UpdatePlaylistSize(playlist.size());
         trayIcon.UpdateFPSLimit(config.GetFPSLimit());
         
         trayIcon.SetChangeVideoCallback([&](const std::wstring& newPath) {
@@ -238,7 +306,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 config.SetPlaylist(playlist);
                 config.Save();
                 
-                trayIcon.UpdateHasPlaylist(!playlist.empty());
+                trayIcon.UpdatePlaylistSize(playlist.size());
                 renderThread.RequestChangeVideo(newPath);
             } else {
                 LOG_ERROR("Rejected invalid or unsafe dropped file path: %ls", newPath.c_str());
@@ -262,7 +330,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 playlist.push_back(newPath);
                 config.SetPlaylist(playlist);
                 config.Save();
-                trayIcon.UpdateHasPlaylist(!playlist.empty());
+                trayIcon.UpdatePlaylistSize(playlist.size());
                 
                 if (playlist.size() == 1) {
                     currentPlaylistItem = 0;
@@ -282,7 +350,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             config.SetPlaylist(playlist);
             config.SetVideoPath(L"");
             config.Save();
-            trayIcon.UpdateHasPlaylist(false);
+            trayIcon.UpdatePlaylistSize(0);
             renderThread.RequestChangeVideo(L"");
             LOG_INFO("Playlist cleared.");
         });
@@ -313,6 +381,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     HWND lastHWnd = host.GetHWND();
+    int lastWidth = -1;
+    int lastHeight = -1;
+    ULONGLONG lastRecoveryAttemptTick = 0;
+    ULONGLONG retryIntervalMs = 1000;
 
     MSG msg = { 0 };
     while (true) {
@@ -327,10 +399,45 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DispatchMessageW(&msg);
         }
 
-        // Idle time: check for Explorer watchdog updates
+        // Recovery check & watchdog updates in main message loop
+        ULONGLONG currentTick = GetTickCount64();
+        if (host.NeedsRecovery()) {
+            if (currentTick - lastRecoveryAttemptTick >= retryIntervalMs) {
+                lastRecoveryAttemptTick = currentTick;
+                LOG_WARN("Explorer restart or window invalidation detected (startup failure or invalidation) (retry interval: %llu ms)... Triggering recovery", retryIntervalMs);
+                
+                // Signal RenderThread to recreate with nullptr to detach D3D11 resources
+                renderThread.RequestRecreate(nullptr);
+                ULONGLONG detachStart = GetTickCount64();
+                while (!renderThread.IsDetached() && (GetTickCount64() - detachStart < 1000)) {
+                    Timer::PreciseSleep(10.0);
+                }
+                if (!renderThread.IsDetached()) {
+                    LOG_WARN("RenderThread did not detach D3D11 resources within 1000ms limit.");
+                } else {
+                    LOG_INFO("RenderThread successfully detached D3D11 resources.");
+                }
+
+                host.Shutdown();
+
+                if (host.Initialize(hInstance)) {
+                    LOG_INFO("Successfully recovered and re-injected wallpaper host.");
+                    retryIntervalMs = 1000; // Reset backoff
+                    renderThread.RequestRecreate(host.GetHWND());
+                } else {
+                    LOG_ERROR("Failed to recover wallpaper host.");
+                    retryIntervalMs = retryIntervalMs * 2;
+                    if (retryIntervalMs > 30000) {
+                        retryIntervalMs = 30000;
+                    }
+                }
+            }
+        }
+
+        // Idle time updates
         host.Update();
 
-        // Check power/idle state
+        // Check power/idle states
         powerMonitor.CheckForegroundAndIdleStates(config.GetIdleTimeoutMinutes());
 
         // Check rotation interval timer
@@ -351,6 +458,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             LOG_INFO("Host window recreated! Requesting RenderThread recovery on new handle.");
             renderThread.RequestRecreate(currentHWnd);
             lastHWnd = currentHWnd;
+            lastWidth = -1;
+            lastHeight = -1;
         }
 
         if (currentHWnd && IsWindow(currentHWnd)) {
@@ -358,7 +467,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (GetClientRect(currentHWnd, &rect)) {
                 int w = rect.right - rect.left;
                 int h = rect.bottom - rect.top;
-                renderThread.RequestResize(w, h);
+                if (w != lastWidth || h != lastHeight) {
+                    renderThread.RequestResize(w, h);
+                    lastWidth = w;
+                    lastHeight = h;
+                }
             }
         }
     }
@@ -371,6 +484,10 @@ exit_loop:
     host.Shutdown();
 
     LOG_INFO("LiveWallpaper main application exiting.");
+
+    if (SUCCEEDED(hrMF)) {
+        MFShutdown();
+    }
 
     if (SUCCEEDED(hrCOM)) {
         CoUninitialize();

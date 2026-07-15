@@ -2,11 +2,11 @@
 #include <windows.h>
 #include <string>
 #include <atomic>
+#include <memory>
 #include "spsc_ring_buffer.h"
 
 struct PathMessage {
     std::wstring path;
-    void Release() { delete this; }
 };
 
 class SynchronizationManager {
@@ -34,6 +34,10 @@ public:
     void RequestRecreate(HWND hWnd);
     bool CheckRecreate(HWND& outHWnd);
 
+    // Detached state (for synchronized destruction/recreation)
+    void SetDetached(bool detached);
+    bool IsDetached() const;
+
     // Video/Shader path requests via SPSC ring buffer
     void RequestChangeVideo(const std::wstring& path);
     bool PopVideoChange(std::wstring& outPath);
@@ -52,7 +56,8 @@ private:
 
     std::atomic<bool> m_recreateRequested{ false };
     std::atomic<HWND> m_newHWnd{ nullptr };
+    std::atomic<bool> m_isDetached{ false };
 
     // SPSC Lock-free Queue for path updates
-    SPSCRingBuffer<PathMessage*, 16> m_pathQueue;
+    SPSCRingBuffer<std::unique_ptr<PathMessage>, 16> m_pathQueue;
 };

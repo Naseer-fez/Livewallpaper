@@ -28,7 +28,7 @@ bool PlaylistDialog::Initialize(HINSTANCE hInstance) {
     wcx.hInstance = hInstance;
     wcx.lpszClassName = L"LiveWallpaperPlaylistDialogClass";
     wcx.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wcx.hbrBackground = (HBRUSH)(COLOR_WINDOW);
+    wcx.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
     RegisterClassExW(&wcx);
     return true;

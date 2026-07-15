@@ -127,3 +127,47 @@ The report must be saved to `%APPDATA%\LiveWallpaper\diagnostic_report.txt` and 
 - [ ] All existing unit tests pass
 - [ ] Existing functionality (video playback, shader rendering, tray icon, playlist, pause/resume, Explorer recovery) is preserved with no regressions
 - [ ] The `--diagnose` flag does not interfere with normal operation when not specified
+
+## Follow-up — 2026-07-15T15:59:13Z
+
+Implement the critical, high, and medium severity fixes identified in the independent code review of the LiveWallpaper C++ and Rust project to resolve memory leaks, thread safety issues, window recreation crashes, and CPU/GPU polling issues.
+
+Working directory: d:/CODE/Utlities/LiveWallpaper
+Integrity mode: development
+
+## Requirements
+
+### R1. Resolve Memory Leaks and Pointer Lifetime Bugs
+- Fix heap memory leaks of `PathMessage*` in `SynchronizationManager::RequestChangeVideo` and `RequestAddVideo` if queue push fails.
+- Fix reference leaks of `IMFSample*` in `VideoDecoder::UpdateFrame` and `CloseVideo` when samples are discarded or left in `SPSCRingBuffer`.
+- Ensure clean destructor behavior for lock-free collections and managers containing raw pointers or references.
+
+### R2. Thread-Safe D3D11 Context Access
+- Synchronize access to `ID3D11DeviceContext` between the render thread (`RenderThreadController`) and the background decoder thread (`VideoDecoder::UpdateFrame` and `DecodingThreadProc`).
+- Ensure texture reallocations in the video decoder are thread-safe and do not race with active shader resource view updates.
+
+### R3. Safe Window Recreation and Explorer Recovery
+- Synchronize window destruction and recreation in `ExplorerIntegration::RecoverFromExplorerRestart` with the render thread controller.
+- Pause the render loop before destroying `m_hWnd` to prevent the render thread from calling `Present` on a dead window handle.
+- Fix the exponential backoff in `ExplorerIntegration` to prevent 1-second busy retry loops when `WorkerW` injection fails.
+
+### R4. Optimize Resize Polling in Main Message Pump
+- Track and cache window dimensions in the main message loop so `RequestResize` is only called on actual size changes.
+- Avoid bypassing frame pacing with unnecessary redraw loops in `RenderThreadController` when sizes match.
+
+### R5. Improve FFI Error Visibility & Security
+- Propagate HLSL shader compilation errors from Rust to C++ instead of swallowing them.
+- Ensure security and validation of the dynamic link library loading process.
+
+## Acceptance Criteria
+
+### Correctness & Stability
+- [ ] No crashes, assertions, or rendering freezes during window resizing, resolution changes, or Windows Explorer restarts.
+- [ ] No thread safety violations or device removal errors (`DXGI_ERROR_DEVICE_REMOVED`) during long-running playback.
+
+### Memory & Resource Leak Verification
+- [ ] Heap allocation monitoring shows zero memory leaks of `PathMessage` or COM references to `IMFSample` / D3D11 resources on video rotation, looping, or termination.
+
+### Performance
+- [ ] CPU and GPU utilization is stable and idle timeout state functions correctly when wallpaper window is obscured or inactive.
+

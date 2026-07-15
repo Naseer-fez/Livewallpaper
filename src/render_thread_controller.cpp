@@ -49,6 +49,13 @@ void RenderThreadController::RequestRecreate(HWND newHWnd) {
     m_syncManager->RequestRecreate(newHWnd);
 }
 
+bool RenderThreadController::IsDetached() const {
+    if (m_syncManager) {
+        return m_syncManager->IsDetached();
+    }
+    return true;
+}
+
 void RenderThreadController::RequestChangeVideo(const std::wstring& path) {
     m_syncManager->RequestChangeVideo(path);
 }
@@ -112,13 +119,18 @@ void RenderThreadController::ThreadProc() {
                 
                 if (IsShaderFile(m_videoPath)) {
                     if (m_shaderBridge->Load()) {
+                        wchar_t errBuf[1024] = { 0 };
                         HRESULT hr = m_shaderBridge->InitShaderHost(
                             m_deviceManager->GetDevice(),
                             m_deviceManager->GetContext(),
                             m_videoPath,
+                            errBuf,
+                            1024,
                             &m_shaderHost
                         );
-                        if (FAILED(hr)) LOG_ERROR("Failed to initialize Rust Shader Host. HR: 0x%08X", hr);
+                        if (FAILED(hr)) {
+                            LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
+                        }
                     }
                 } else {
                     if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
@@ -156,6 +168,12 @@ void RenderThreadController::ThreadProc() {
             m_swapChainManager->Shutdown();
             m_deviceManager->Shutdown();
 
+            if (targetHWnd == nullptr) {
+                m_syncManager->SetDetached(true);
+            } else {
+                m_syncManager->SetDetached(false);
+            }
+
             if (targetHWnd && !m_videoPath.empty()) {
                 RECT rect;
                 GetClientRect(m_hWnd, &rect);
@@ -169,7 +187,11 @@ void RenderThreadController::ThreadProc() {
                         m_videoRenderer->Initialize(m_deviceManager.get(), m_swapChainManager.get());
                         if (IsShaderFile(m_videoPath)) {
                             if (m_shaderBridge->Load()) {
-                                m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, &m_shaderHost);
+                                wchar_t errBuf[1024] = { 0 };
+                                HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
+                                if (FAILED(hr)) {
+                                    LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
+                                }
                             }
                         } else {
                             if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
@@ -189,7 +211,6 @@ void RenderThreadController::ThreadProc() {
         }
         if (changeVideoNeeded) {
             m_videoPath = poppedPath;
-            m_playlistManager->SetPlaylist({ m_videoPath });
             LOG_INFO_W(L"RenderThreadController: Changing wallpaper to: %ls", m_videoPath.c_str());
             m_screenCleared = false;
 
@@ -203,7 +224,11 @@ void RenderThreadController::ThreadProc() {
                 if (!m_videoPath.empty()) {
                     if (IsShaderFile(m_videoPath)) {
                         if (m_shaderBridge->Load()) {
-                            m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, &m_shaderHost);
+                            wchar_t errBuf[1024] = { 0 };
+                            HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
+                            if (FAILED(hr)) {
+                                LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
+                            }
                         }
                     } else {
                         if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
@@ -231,7 +256,11 @@ void RenderThreadController::ThreadProc() {
                 if (m_deviceManager->GetDevice() && !m_videoPath.empty()) {
                     if (IsShaderFile(m_videoPath)) {
                         if (m_shaderBridge->Load()) {
-                            m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, &m_shaderHost);
+                            wchar_t errBuf[1024] = { 0 };
+                            HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
+                            if (FAILED(hr)) {
+                                LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
+                            }
                         }
                     } else {
                         if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
@@ -249,6 +278,11 @@ void RenderThreadController::ThreadProc() {
             m_swapChainManager->Resize(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), newWidth, newHeight);
         }
 
+        Microsoft::WRL::ComPtr<ID3D10Multithread> pMultithread;
+        if (m_deviceManager && m_deviceManager->GetDevice()) {
+            m_deviceManager->GetDevice()->QueryInterface(IID_PPV_ARGS(&pMultithread));
+        }
+
         // 5. Pause Checks
         bool isPaused = m_syncManager->IsPaused();
         if (m_decoder && !m_shaderHost) {
@@ -258,8 +292,10 @@ void RenderThreadController::ThreadProc() {
         if (m_videoPath.empty() || isPaused) {
             if (m_videoPath.empty() && m_deviceManager->GetContext() && m_swapChainManager->GetSwapChain() && !m_screenCleared) {
                 float black[4] = {0,0,0,1};
+                if (pMultithread) pMultithread->Enter();
                 m_deviceManager->GetContext()->ClearRenderTargetView(m_swapChainManager->GetRenderTargetView(), black);
                 m_swapChainManager->Present(m_syncManager->GetFPSLimit());
+                if (pMultithread) pMultithread->Leave();
                 m_screenCleared = true;
             }
             Timer::PreciseSleep(100.0);
@@ -291,6 +327,7 @@ void RenderThreadController::ThreadProc() {
                 bool isMouseDown = (GetKeyState(VK_LBUTTON) & 0x8000) != 0;
                 float audioData[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+                if (pMultithread) pMultithread->Enter();
                 m_shaderBridge->RenderShaderFrame(
                     m_shaderHost, 
                     m_swapChainManager->GetRenderTargetView(),
@@ -300,9 +337,11 @@ void RenderThreadController::ThreadProc() {
                 );
                 
                 hrPresent = m_swapChainManager->Present(m_syncManager->GetFPSLimit());
+                if (pMultithread) pMultithread->Leave();
                 frameUpdated = true;
             } else if (m_decoder->IsVideoLoaded()) {
                 double waitTimeMs = 0.0;
+                if (pMultithread) pMultithread->Enter();
                 frameUpdated = m_decoder->UpdateFrame(m_deviceManager->GetContext(), waitTimeMs);
 
                 if (frameUpdated || forceRedraw) {
@@ -315,6 +354,7 @@ void RenderThreadController::ThreadProc() {
                         m_decoder->GetVideoHeight()
                     );
                     hrPresent = m_swapChainManager->Present(m_syncManager->GetFPSLimit());
+                    if (pMultithread) pMultithread->Leave();
                     
                     // Milestone Logging: First Frame Presented
                     if (frameUpdated && SUCCEEDED(hrPresent) && !m_firstFrameMilestoneLogged) {
@@ -322,6 +362,7 @@ void RenderThreadController::ThreadProc() {
                         m_firstFrameMilestoneLogged = true;
                     }
                 } else {
+                    if (pMultithread) pMultithread->Leave();
                     if (waitTimeMs > 0.0) {
                         Timer::PreciseSleep(waitTimeMs < 1.0 ? 1.0 : waitTimeMs);
                     }
@@ -358,6 +399,7 @@ void RenderThreadController::ThreadProc() {
     m_videoRenderer->Shutdown();
     m_swapChainManager->Shutdown();
     m_deviceManager->Shutdown();
+    m_syncManager->SetDetached(true);
 
     m_shaderBridge->Unload();
 

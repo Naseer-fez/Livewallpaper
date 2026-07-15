@@ -72,7 +72,7 @@ private:
     std::atomic<bool> m_isPaused{ false };
     
     // Shared SPSC lock-free atomic sample queue (max capacity 16 is a power of 2)
-    SPSCRingBuffer<IMFSample*, 16> m_sampleQueue;
+    SPSCRingBuffer<Microsoft::WRL::ComPtr<IMFSample>, 16> m_sampleQueue;
     double m_playbackTimeMs = 0.0;
     double m_currentFrameTimestamp = -1.0;
     Timer m_playbackTimer;

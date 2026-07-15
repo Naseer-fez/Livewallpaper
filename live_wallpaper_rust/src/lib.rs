@@ -119,24 +119,13 @@ impl ShaderHost {
         let constant_buffer = constant_buffer.ok_or_else(|| Error::new(E_FAIL, "Failed to create constant buffer"))?;
 
         // Compile the initial shader synchronously for immediate startup
-        let user_code = std::fs::read_to_string(shader_path);
-        let compile_res = match &user_code {
-            Ok(code) => compile_shader(code, "main", "ps_4_0"),
-            Err(_) => compile_shader(FALLBACK_PS_CODE, "main", "ps_4_0"),
-        };
-        let ps_blob = match compile_res {
-            Ok(blob) => Some(blob),
-            Err(e) => {
-                eprintln!("[Rust Shader Host] Initial compilation error: {:?}", e);
-                compile_shader(FALLBACK_PS_CODE, "main", "ps_4_0").ok()
-            }
-        };
+        let user_code = std::fs::read_to_string(shader_path)
+            .map_err(|e| Error::new(E_FAIL, format!("Failed to read shader file: {:?}", e)))?;
+        let ps_blob = compile_shader(&user_code, "main", "ps_4_0")?;
         let mut pixel_shader = None;
-        if let Some(blob) = ps_blob {
-            unsafe {
-                let shader_data = std::slice::from_raw_parts(blob.GetBufferPointer() as *const u8, blob.GetBufferSize());
-                let _ = device.CreatePixelShader(shader_data, None, Some(&mut pixel_shader));
-            }
+        unsafe {
+            let shader_data = std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
+            device.CreatePixelShader(shader_data, None, Some(&mut pixel_shader))?;
         }
 
         // Initialize async file watcher state
@@ -397,22 +386,40 @@ unsafe fn clone_com_from_raw<T: Interface>(raw: *mut c_void) -> Option<T> {
     cloned_unk.cast::<T>().ok()
 }
 
+unsafe fn write_error_to_buffer(err_msg: &str, out_error_buffer: *mut u16, error_buffer_len: u32) {
+    if out_error_buffer.is_null() || error_buffer_len == 0 {
+        return;
+    }
+    let encoded: Vec<u16> = err_msg.encode_utf16().collect();
+    let copy_len = std::cmp::min(encoded.len(), (error_buffer_len - 1) as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_error_buffer, copy_len);
+        *out_error_buffer.add(copy_len) = 0;
+    }
+}
+
 // FFI Boundaries with panic protection
 /// # Safety
 ///
 /// This function is unsafe because it dereferences raw pointers passed from C++.
 /// The caller must ensure that `device_raw`, `context_raw`, `shader_path_utf16`,
-/// and `out_host` are valid, properly aligned, and live pointers.
+/// `out_error_buffer`, and `out_host` are valid, properly aligned, and live pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn init_shader_host(
     device_raw: *mut c_void,
     context_raw: *mut c_void,
     shader_path_utf16: *const u16,
+    out_error_buffer: *mut u16,
+    error_buffer_len: u32,
     out_host: *mut *mut ShaderHost
 ) -> HRESULT {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if device_raw.is_null() || context_raw.is_null() || shader_path_utf16.is_null() || out_host.is_null() {
             return E_POINTER;
+        }
+
+        if !out_error_buffer.is_null() && error_buffer_len > 0 {
+            unsafe { *out_error_buffer = 0; }
         }
 
         let device = match unsafe { clone_com_from_raw::<ID3D11Device>(device_raw) } {
@@ -445,7 +452,13 @@ pub unsafe extern "C" fn init_shader_host(
                 unsafe { *out_host = Box::into_raw(Box::new(host)); }
                 S_OK
             }
-            Err(e) => e.code(),
+            Err(e) => {
+                let err_msg = e.message().to_string();
+                unsafe {
+                    write_error_to_buffer(&err_msg, out_error_buffer, error_buffer_len);
+                }
+                e.code()
+            }
         }
     }));
 
@@ -561,6 +574,8 @@ mod tests {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null(),
+                std::ptr::null_mut(),
+                0,
                 std::ptr::null_mut()
             );
             assert_eq!(hr, E_POINTER);
@@ -571,6 +586,8 @@ mod tests {
                 dummy_device,
                 std::ptr::null_mut(),
                 std::ptr::null(),
+                std::ptr::null_mut(),
+                0,
                 std::ptr::null_mut()
             );
             assert_eq!(hr, E_POINTER);

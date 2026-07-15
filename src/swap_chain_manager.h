@@ -28,6 +28,7 @@ private:
     HWND m_hWnd = nullptr;
     int m_width = 0;
     int m_height = 0;
+    unsigned int m_bufferCount = 2;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain1> m_swapChain;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_renderTargetView;

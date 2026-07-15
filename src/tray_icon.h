@@ -25,7 +25,7 @@ public:
 
     void UpdatePauseState(bool isPaused);
     void UpdateRotationInterval(int minutes);
-    void UpdateHasPlaylist(bool hasPlaylist);
+    void UpdatePlaylistSize(size_t size);
     void UpdateFPSLimit(int fps);
 
 private:
@@ -39,7 +39,7 @@ private:
     HWND m_hWnd = nullptr;
     bool m_isPaused = false;
     int m_rotationIntervalMinutes = 0;
-    bool m_hasPlaylist = false;
+    size_t m_playlistSize = 0;
     int m_fpsLimit = 0;
 
     std::function<void(const std::wstring&)> m_onChangeVideo;

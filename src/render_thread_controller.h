@@ -23,6 +23,7 @@ public:
 
     void RequestResize(int width, int height);
     void RequestRecreate(HWND newHWnd);
+    bool IsDetached() const;
     void RequestChangeVideo(const std::wstring& path);
 
     void SetPaused(bool paused);
