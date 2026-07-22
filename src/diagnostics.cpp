@@ -428,6 +428,7 @@ bool RunDiagnosticReport() {
             }
         } else {
             WriteLine(f, "  *** CRITICAL: Progman window not found! Explorer may not be running. ***");
+            WriteLine(f, "  (Note: In headless or test environments, LiveWallpaper will fall back to Standalone / Test Window mode.)");
         }
     }
     WriteLine(f, "");

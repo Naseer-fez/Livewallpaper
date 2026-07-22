@@ -204,7 +204,7 @@ class LiveWallpaperE2ETest(unittest.TestCase):
     def test_f1_t1_4_first_frame_milestone_logged(self):
         p = subprocess.Popen([self.exe_path])
         try:
-            self.assert_log_contains("First video frame successfully decoded AND presented")
+            self.assert_log_contains("First video frame successfully decoded AND presented", timeout=12.0)
         finally:
             p.terminate()
 

@@ -169,6 +169,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
     }
 
     if (!initialized || !m_pSourceReader) {
+        LOG_ERROR("LoadVideo: All Source Reader creation attempts failed for path: %ls", m_filePath.c_str());
         LOG_ERROR_W(L"LoadVideo: All Source Reader creation attempts failed for path: %ls", m_filePath.c_str());
         CloseVideo();
         return false;

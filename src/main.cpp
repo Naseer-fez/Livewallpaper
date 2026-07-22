@@ -64,18 +64,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         sa.lpSecurityDescriptor = NULL;
     }
     HANDLE hMutex = CreateMutexW(&sa, TRUE, L"Local\\LiveWallpaperEngineUniqueMutex_FEZN");
+    DWORD dwMutexErr = GetLastError();
     if (pSD) LocalFree(pSD);
     if (hMutex == NULL) {
         return -1;
-    }
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(hMutex);
-        return 0; // Exit silently if another instance is already running
     }
 
     Utils::InitializeLogging();
     LOG_INFO("LiveWallpaper main application starting.");
     LOG_INFO("WinMain starting. CmdLine: '%s'", lpCmdLine);
+
+    if (dwMutexErr == ERROR_ALREADY_EXISTS) {
+        LOG_WARN("Another instance of LiveWallpaper is already running. Exiting process.");
+        Utils::ShutdownLogging();
+        CloseHandle(hMutex);
+        return 0; // Exit if another instance is already running
+    }
 
     // Validate command line arguments
     if (lpCmdLine && strlen(lpCmdLine) > 0) {
