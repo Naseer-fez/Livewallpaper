@@ -7,6 +7,7 @@
 #include "power_monitor.h"
 #include "playlist_dialog.h"
 #include "diagnostics.h"
+#include "timer.h"
 #include <sddl.h>
 #include <cstring>
 #include <mfapi.h>
@@ -71,11 +72,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
     Utils::InitializeLogging();
+    Timer::BeginHighResolution();
     LOG_INFO("LiveWallpaper main application starting.");
     LOG_INFO("WinMain starting. CmdLine: '%s'", lpCmdLine);
 
     if (dwMutexErr == ERROR_ALREADY_EXISTS) {
         LOG_WARN("Another instance of LiveWallpaper is already running. Exiting process.");
+        Timer::EndHighResolution();
         Utils::ShutdownLogging();
         CloseHandle(hMutex);
         return 0; // Exit if another instance is already running
@@ -100,6 +103,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                     token != "--force-warp" && token != "/force-warp" &&
                     token != "--test-env" && token != "/test-env") {
                     LOG_ERROR("Unknown or invalid command line argument: '%s'", token.c_str());
+                    Timer::EndHighResolution();
                     Utils::ShutdownLogging();
                     CloseHandle(hMutex);
                     return -1;
@@ -115,6 +119,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         HRESULT hrDiag = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
         Diagnostics::RunDiagnosticReport();
         if (SUCCEEDED(hrDiag)) CoUninitialize();
+        Timer::EndHighResolution();
         Utils::ShutdownLogging();
         CloseHandle(hMutex);
         return 0;
@@ -238,6 +243,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             bool effectivePause = config.IsPaused() || isSystemPowerPaused;
             renderThread.SetPaused(effectivePause);
             LOG_INFO("Power state changed. Effective pause state: %d", effectivePause);
+        });
+        powerMonitor.SetThrottleCallback([&](bool throttleForOcclusion) {
+            renderThread.SetThrottled(throttleForOcclusion);
+            LOG_INFO("Occlusion state changed. Throttled: %d", throttleForOcclusion);
         });
     } else {
         LOG_WARN("Failed to initialize Power Monitor.");
@@ -497,6 +506,7 @@ exit_loop:
         CoUninitialize();
     }
 
+    Timer::EndHighResolution();
     Utils::ShutdownLogging();
 
     CloseHandle(hMutex);

@@ -22,6 +22,10 @@ public:
     void SetPaused(bool paused);
     bool IsPaused() const;
 
+    // Throttled state (for desktop occlusion)
+    void SetThrottled(bool throttled);
+    bool IsThrottled() const;
+
     // FPS Limit
     void SetFPSLimit(int fps);
     int GetFPSLimit() const;
@@ -48,6 +52,7 @@ public:
 private:
     std::atomic<bool> m_runThread{ false };
     std::atomic<bool> m_isPaused{ false };
+    std::atomic<bool> m_isThrottled{ false };
     std::atomic<int> m_fpsLimit{ 60 };
 
     std::atomic<bool> m_resizeRequested{ false };

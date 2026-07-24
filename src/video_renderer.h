@@ -23,6 +23,7 @@ public:
     );
 
     HRESULT RenderTestFrame();
+    void InvalidatePipelineState() { m_pipelineBound = false; }
 
 private:
     bool InitializeShaders();
@@ -31,6 +32,7 @@ private:
     DeviceManager* m_pDeviceManager = nullptr;
     SwapChainManager* m_pSwapChainManager = nullptr;
     float m_hue = 0.0f;
+    bool m_pipelineBound = false;
 
     Microsoft::WRL::ComPtr<ID3D11VertexShader> m_vertexShader;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> m_pixelShader;

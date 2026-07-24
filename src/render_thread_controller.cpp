@@ -64,6 +64,10 @@ void RenderThreadController::SetPaused(bool paused) {
     m_syncManager->SetPaused(paused);
 }
 
+void RenderThreadController::SetThrottled(bool throttled) {
+    m_syncManager->SetThrottled(throttled);
+}
+
 void RenderThreadController::SetFPSLimit(int fpsLimit) {
     m_syncManager->SetFPSLimit(fpsLimit);
 }
@@ -86,6 +90,61 @@ bool RenderThreadController::IsShaderFile(const std::wstring& path) {
     return ext == L".hlsl";
 }
 
+bool RenderThreadController::InitializeMediaPipeline(HWND hWnd, const std::wstring& videoPath) {
+    if (!hWnd || videoPath.empty()) return false;
+    RECT rect;
+    GetClientRect(hWnd, &rect);
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
+    if (w == 0) w = 800;
+    if (h == 0) h = 600;
+
+    if (m_deviceManager->Initialize()) {
+        m_pMultithread.Reset();
+        if (m_deviceManager->GetDevice()) {
+            m_deviceManager->GetDevice()->QueryInterface(IID_PPV_ARGS(&m_pMultithread));
+        }
+
+        if (m_swapChainManager->Initialize(m_deviceManager->GetDevice(), hWnd, w, h)) {
+            m_videoRenderer->Initialize(m_deviceManager.get(), m_swapChainManager.get());
+            if (IsShaderFile(videoPath)) {
+                if (m_shaderBridge->Load()) {
+                    wchar_t errBuf[1024] = { 0 };
+                    HRESULT hr = m_shaderBridge->InitShaderHost(
+                        m_deviceManager->GetDevice(),
+                        m_deviceManager->GetContext(),
+                        videoPath,
+                        errBuf,
+                        1024,
+                        &m_shaderHost
+                    );
+                    if (FAILED(hr)) {
+                        LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
+                    }
+                }
+            } else {
+                if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
+                    m_decoder->LoadVideo(videoPath);
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+void RenderThreadController::TeardownMediaPipeline() {
+    if (m_shaderHost) {
+        m_shaderBridge->ShutdownShaderHost(m_shaderHost);
+        m_shaderHost = nullptr;
+    }
+    m_decoder->Shutdown();
+    m_videoRenderer->Shutdown();
+    m_swapChainManager->Shutdown();
+    m_deviceManager->Shutdown();
+    m_pMultithread.Reset();
+}
+
 void RenderThreadController::ThreadProc() {
     LOG_INFO("RenderThreadController::ThreadProc entry.");
     m_screenCleared = false;
@@ -105,41 +164,7 @@ void RenderThreadController::ThreadProc() {
     m_shaderBridge = std::make_unique<FFIShaderBridge>();
 
     // Initial load
-    if (m_hWnd && !m_videoPath.empty()) {
-        RECT rect;
-        GetClientRect(m_hWnd, &rect);
-        int w = rect.right - rect.left;
-        int h = rect.bottom - rect.top;
-        if (w == 0) w = 800;
-        if (h == 0) h = 600;
-
-        if (m_deviceManager->Initialize()) {
-            if (m_swapChainManager->Initialize(m_deviceManager->GetDevice(), m_hWnd, w, h)) {
-                m_videoRenderer->Initialize(m_deviceManager.get(), m_swapChainManager.get());
-                
-                if (IsShaderFile(m_videoPath)) {
-                    if (m_shaderBridge->Load()) {
-                        wchar_t errBuf[1024] = { 0 };
-                        HRESULT hr = m_shaderBridge->InitShaderHost(
-                            m_deviceManager->GetDevice(),
-                            m_deviceManager->GetContext(),
-                            m_videoPath,
-                            errBuf,
-                            1024,
-                            &m_shaderHost
-                        );
-                        if (FAILED(hr)) {
-                            LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
-                        }
-                    }
-                } else {
-                    if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
-                        m_decoder->LoadVideo(m_videoPath);
-                    }
-                }
-            }
-        }
-    }
+    InitializeMediaPipeline(m_hWnd, m_videoPath);
 
     Timer frameRateTimer;
     Timer deltaTimer; // Used for measuring delta time for playlist updates
@@ -158,15 +183,7 @@ void RenderThreadController::ThreadProc() {
             LOG_INFO("RenderThreadController: Re-initializing device manager on new handle.");
             m_screenCleared = false;
             
-            // Teardown in reverse order of creation
-            if (m_shaderHost) {
-                m_shaderBridge->ShutdownShaderHost(m_shaderHost);
-                m_shaderHost = nullptr;
-            }
-            m_decoder->Shutdown();
-            m_videoRenderer->Shutdown();
-            m_swapChainManager->Shutdown();
-            m_deviceManager->Shutdown();
+            TeardownMediaPipeline();
 
             if (targetHWnd == nullptr) {
                 m_syncManager->SetDetached(true);
@@ -174,33 +191,7 @@ void RenderThreadController::ThreadProc() {
                 m_syncManager->SetDetached(false);
             }
 
-            if (targetHWnd && !m_videoPath.empty()) {
-                RECT rect;
-                GetClientRect(m_hWnd, &rect);
-                int w = rect.right - rect.left;
-                int h = rect.bottom - rect.top;
-                if (w == 0) w = 800;
-                if (h == 0) h = 600;
-
-                if (m_deviceManager->Initialize()) {
-                    if (m_swapChainManager->Initialize(m_deviceManager->GetDevice(), targetHWnd, w, h)) {
-                        m_videoRenderer->Initialize(m_deviceManager.get(), m_swapChainManager.get());
-                        if (IsShaderFile(m_videoPath)) {
-                            if (m_shaderBridge->Load()) {
-                                wchar_t errBuf[1024] = { 0 };
-                                HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
-                                if (FAILED(hr)) {
-                                    LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
-                                }
-                            }
-                        } else {
-                            if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
-                                m_decoder->LoadVideo(m_videoPath);
-                            }
-                        }
-                    }
-                }
-            }
+            InitializeMediaPipeline(targetHWnd, m_videoPath);
         }
 
         // 2. Handle Video/Shader Change
@@ -220,20 +211,18 @@ void RenderThreadController::ThreadProc() {
             }
             m_decoder->Shutdown();
             
-            if (m_deviceManager->GetDevice()) {
-                if (!m_videoPath.empty()) {
-                    if (IsShaderFile(m_videoPath)) {
-                        if (m_shaderBridge->Load()) {
-                            wchar_t errBuf[1024] = { 0 };
-                            HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
-                            if (FAILED(hr)) {
-                                LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
-                            }
+            if (m_deviceManager->GetDevice() && !m_videoPath.empty()) {
+                if (IsShaderFile(m_videoPath)) {
+                    if (m_shaderBridge->Load()) {
+                        wchar_t errBuf[1024] = { 0 };
+                        HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
+                        if (FAILED(hr)) {
+                            LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
                         }
-                    } else {
-                        if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
-                            m_decoder->LoadVideo(m_videoPath);
-                        }
+                    }
+                } else {
+                    if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
+                        m_decoder->LoadVideo(m_videoPath);
                     }
                 }
             }
@@ -278,13 +267,11 @@ void RenderThreadController::ThreadProc() {
             m_swapChainManager->Resize(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), newWidth, newHeight);
         }
 
-        Microsoft::WRL::ComPtr<ID3D10Multithread> pMultithread;
-        if (m_deviceManager && m_deviceManager->GetDevice()) {
-            m_deviceManager->GetDevice()->QueryInterface(IID_PPV_ARGS(&pMultithread));
-        }
+        ID3D10Multithread* pMultithread = m_pMultithread.Get();
 
-        // 5. Pause Checks
+        // 5. Pause & Throttle Checks
         bool isPaused = m_syncManager->IsPaused();
+        bool isThrottled = m_syncManager->IsThrottled();
         if (m_decoder && !m_shaderHost) {
             m_decoder->SetPaused(isPaused || m_videoPath.empty());
         }
@@ -300,6 +287,11 @@ void RenderThreadController::ThreadProc() {
             }
             Timer::PreciseSleep(100.0);
             continue;
+        }
+
+        if (isThrottled) {
+            // Drop to 1 FPS when wallpaper is occluded by normal windows
+            Timer::PreciseSleep(1000.0);
         }
 
         // 6. Update and Render Frame

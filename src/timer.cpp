@@ -3,12 +3,16 @@
 
 Timer::Timer() {
     QueryPerformanceFrequency(&m_frequency);
-    // Request 1ms scheduler precision from OS
-    timeBeginPeriod(1);
     Reset();
 }
 
-Timer::~Timer() {
+Timer::~Timer() {}
+
+void Timer::BeginHighResolution() {
+    timeBeginPeriod(1);
+}
+
+void Timer::EndHighResolution() {
     timeEndPeriod(1);
 }
 

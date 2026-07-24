@@ -3,6 +3,11 @@
 #include <winuser.h>
 #include <initguid.h>
 #include <shellapi.h>
+#include <dwmapi.h>
+
+#ifndef DWMWA_CLOAKED
+#define DWMWA_CLOAKED 14
+#endif
 
 // Define missing Windows 8+ shell notification state enums for older MinGW toolchains
 #ifndef QUNS_RUNNING_D3D_FULL_SCREEN
@@ -98,6 +103,11 @@ void PowerMonitor::SetPauseCallback(std::function<void(bool)> callback) {
     EvaluatePowerState(); // Notify initial state
 }
 
+void PowerMonitor::SetThrottleCallback(std::function<void(bool)> callback) {
+    m_throttleCallback = callback;
+    EvaluatePowerState(); // Notify initial state
+}
+
 void PowerMonitor::EvaluatePowerState() {
     bool shouldPause = m_isOnBattery || m_isDisplayOff || m_isFullscreenAppRunning || m_isUserIdle || m_isObscured;
     if (g_isHeadlessTest) {
@@ -106,6 +116,69 @@ void PowerMonitor::EvaluatePowerState() {
     if (m_pauseCallback) {
         m_pauseCallback(shouldPause);
     }
+    if (m_throttleCallback) {
+        m_throttleCallback(m_isDesktopOccluded && !shouldPause);
+    }
+}
+
+struct OcclusionCheckData {
+    HMONITOR hMonitor;
+    RECT rcMonitor;
+    bool isFullyCovered = false;
+};
+
+static BOOL CALLBACK EnumWindowsOcclusionProc(HWND hWnd, LPARAM lParam) {
+    OcclusionCheckData* pData = reinterpret_cast<OcclusionCheckData*>(lParam);
+    if (!IsWindowVisible(hWnd) || IsIconic(hWnd)) return TRUE;
+
+    wchar_t className[256];
+    if (GetClassNameW(hWnd, className, 256) > 0) {
+        if (wcscmp(className, L"WorkerW") == 0 ||
+            wcscmp(className, L"Progman") == 0 ||
+            wcscmp(className, L"Shell_TrayWnd") == 0) {
+            return TRUE;
+        }
+    }
+
+    BOOL isCloaked = FALSE;
+    if (SUCCEEDED(DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, &isCloaked, sizeof(isCloaked))) && isCloaked) {
+        return TRUE;
+    }
+
+    RECT rcWin;
+    if (GetWindowRect(hWnd, &rcWin)) {
+        if (rcWin.left <= pData->rcMonitor.left && rcWin.top <= pData->rcMonitor.top &&
+            rcWin.right >= pData->rcMonitor.right && rcWin.bottom >= pData->rcMonitor.bottom) {
+            pData->isFullyCovered = true;
+            return FALSE;
+        }
+
+        if (IsZoomed(hWnd)) {
+            HMONITOR hWinMon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
+            if (hWinMon == pData->hMonitor) {
+                pData->isFullyCovered = true;
+                return FALSE;
+            }
+        }
+    }
+
+    return TRUE;
+}
+
+bool PowerMonitor::CheckDesktopOcclusion() {
+    HMONITOR hPrimary = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (!GetMonitorInfoW(hPrimary, &mi)) {
+        return false;
+    }
+
+    OcclusionCheckData data;
+    data.hMonitor = hPrimary;
+    data.rcMonitor = mi.rcMonitor;
+    data.isFullyCovered = false;
+
+    EnumWindows(EnumWindowsOcclusionProc, reinterpret_cast<LPARAM>(&data));
+    return data.isFullyCovered;
 }
 
 void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
@@ -183,6 +256,14 @@ void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
         m_isObscured = newIsObscured;
         stateChanged = true;
         LOG_INFO("Shell notification/obscuration state changed to: %d", m_isObscured);
+    }
+
+    // 4. Desktop Occlusion Check (Normal windows fully covering desktop)
+    bool newIsDesktopOccluded = CheckDesktopOcclusion();
+    if (newIsDesktopOccluded != m_isDesktopOccluded) {
+        m_isDesktopOccluded = newIsDesktopOccluded;
+        stateChanged = true;
+        LOG_INFO("Desktop occlusion state changed to: %d", m_isDesktopOccluded);
     }
 
     if (stateChanged) {

@@ -22,6 +22,14 @@ bool SynchronizationManager::IsPaused() const {
     return m_isPaused.load(std::memory_order_acquire);
 }
 
+void SynchronizationManager::SetThrottled(bool throttled) {
+    m_isThrottled.store(throttled, std::memory_order_release);
+}
+
+bool SynchronizationManager::IsThrottled() const {
+    return m_isThrottled.load(std::memory_order_acquire);
+}
+
 void SynchronizationManager::SetFPSLimit(int fps) {
     m_fpsLimit.store(fps, std::memory_order_release);
 }

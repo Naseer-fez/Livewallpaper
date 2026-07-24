@@ -97,6 +97,7 @@ bool VideoRenderer::Initialize(DeviceManager* pDeviceManager, SwapChainManager* 
     }
     m_pDeviceManager = pDeviceManager;
     m_pSwapChainManager = pSwapChainManager;
+    m_pipelineBound = false;
 
     if (!InitializeShaders()) {
         LOG_ERROR("Failed to initialize video quad shaders.");
@@ -114,6 +115,7 @@ void VideoRenderer::Shutdown() {
     m_constantBuffer.Reset();
     m_pDeviceManager = nullptr;
     m_pSwapChainManager = nullptr;
+    m_pipelineBound = false;
 }
 
 bool VideoRenderer::InitializeShaders() {
@@ -239,17 +241,19 @@ HRESULT VideoRenderer::RenderVideoFrame(
 
     UpdateAspectRatioCB(textureWidth, textureHeight, videoWidth, videoHeight);
 
-    d3dContext->VSSetShader(m_vertexShader.Get(), nullptr, 0);
-    d3dContext->PSSetShader(m_pixelShader.Get(), nullptr, 0);
-    d3dContext->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+    if (!m_pipelineBound) {
+        d3dContext->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+        d3dContext->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+        d3dContext->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+        d3dContext->PSSetSamplers(0, 1, m_samplerState.GetAddressOf());
+        d3dContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        d3dContext->IASetInputLayout(nullptr);
+        m_pipelineBound = true;
+    }
     
     ID3D11ShaderResourceView* srvs[2] = { pVideoSRV_Y, pVideoSRV_UV };
     LOG_DEBUG("RenderVideoFrame: Binding SRVs: Y = %p, UV = %p", pVideoSRV_Y, pVideoSRV_UV);
     d3dContext->PSSetShaderResources(0, 2, srvs);
-    d3dContext->PSSetSamplers(0, 1, m_samplerState.GetAddressOf());
-
-    d3dContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    d3dContext->IASetInputLayout(nullptr);
 
     LOG_DEBUG("RenderVideoFrame: Executing draw call...");
     d3dContext->Draw(3, 0);

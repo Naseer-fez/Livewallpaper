@@ -49,6 +49,7 @@ pub struct ShaderHost {
     // Uniform tracking
     start_time: Instant,
     frame_count: i32,
+    pipeline_bound: bool,
 }
 
 // Global default vertex shader that generates a full-screen triangle using SV_VertexID
@@ -230,6 +231,7 @@ impl ShaderHost {
             watcher_handle,
             start_time: Instant::now(),
             frame_count: 0,
+            pipeline_bound: false,
         })
     }
 
@@ -245,6 +247,7 @@ impl ShaderHost {
                     let hr = self.device.CreatePixelShader(&bytes, None, Some(&mut pixel_shader));
                     if hr.is_ok() && pixel_shader.is_some() {
                         self.pixel_shader = pixel_shader;
+                        self.pipeline_bound = false;
                     } else {
                         eprintln!("[Rust Shader Host] Failed to create Pixel Shader from background compiled bytes. HR: {:?}", hr);
                     }
@@ -304,16 +307,19 @@ impl ShaderHost {
             self.context.RSSetViewports(Some(&[viewport]));
             self.context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
 
-            // Set shaders and buffers
-            self.context.VSSetShader(&self.vertex_shader, None);
-            if let Some(ps) = &self.pixel_shader {
-                self.context.PSSetShader(ps, None);
-            }
-            self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
-            self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
+            // Set shaders and buffers if pipeline state has changed or not yet bound
+            if !self.pipeline_bound {
+                self.context.VSSetShader(&self.vertex_shader, None);
+                if let Some(ps) = &self.pixel_shader {
+                    self.context.PSSetShader(ps, None);
+                }
+                self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
+                self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
 
-            self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            self.context.IASetInputLayout(None);
+                self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                self.context.IASetInputLayout(None);
+                self.pipeline_bound = true;
+            }
 
             // Draw fullscreen quad (1 triangle SV_VertexID layout)
             self.context.Draw(3, 0);

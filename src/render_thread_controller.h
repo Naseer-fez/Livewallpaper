@@ -27,6 +27,7 @@ public:
     void RequestChangeVideo(const std::wstring& path);
 
     void SetPaused(bool paused);
+    void SetThrottled(bool throttled);
     void SetFPSLimit(int fpsLimit);
 
     // Playlist support
@@ -36,6 +37,8 @@ public:
 private:
     void ThreadProc();
     bool IsShaderFile(const std::wstring& path);
+    bool InitializeMediaPipeline(HWND hWnd, const std::wstring& videoPath);
+    void TeardownMediaPipeline();
 
     HWND m_hWnd = nullptr;
     std::wstring m_videoPath;
@@ -53,6 +56,8 @@ private:
     std::unique_ptr<VideoDecoder> m_decoder;
     std::unique_ptr<FFIShaderBridge> m_shaderBridge;
     
+    Microsoft::WRL::ComPtr<ID3D10Multithread> m_pMultithread;
+
     void* m_shaderHost = nullptr; // Opaque Rust pointer
     bool m_screenCleared = false;
     bool m_firstFrameMilestoneLogged = false;

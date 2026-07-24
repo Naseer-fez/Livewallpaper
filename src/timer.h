@@ -12,6 +12,10 @@ public:
     // Returns elapsed time in milliseconds
     double GetElapsedMilliseconds() const;
 
+    // Global timer resolution management
+    static void BeginHighResolution();
+    static void EndHighResolution();
+
     // High precision sleep using a combination of Sleep(0/1) and spin-locking
     static void PreciseSleep(double milliseconds);
 
