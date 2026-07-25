@@ -194,6 +194,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     std::wstring videoPath = config.GetVideoPath();
     std::vector<std::wstring> playlist = config.GetPlaylist();
 
+    // Check if a wallpaper/shader path was passed via command line argument
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+        for (int i = 1; i < argc; ++i) {
+            if (argv[i][0] != L'-' && argv[i][0] != L'/') {
+                std::wstring cliPath = argv[i];
+                if (Utils::ValidateFilePath(cliPath)) {
+                    videoPath = cliPath;
+                    LOG_INFO_W(L"WinMain: Loaded wallpaper path from command line: %ls", videoPath.c_str());
+                    config.SetVideoPath(videoPath);
+                    playlist = { videoPath };
+                    config.SetPlaylist(playlist);
+                    config.Save();
+                    break;
+                }
+            }
+        }
+        LocalFree(argv);
+    }
+
     // Migrate old single video config to playlist if playlist is empty
     if (playlist.empty() && !videoPath.empty()) {
         playlist.push_back(videoPath);

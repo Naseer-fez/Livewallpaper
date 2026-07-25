@@ -122,7 +122,11 @@ impl ShaderHost {
         // Compile the initial shader synchronously for immediate startup
         let user_code = std::fs::read_to_string(shader_path)
             .map_err(|e| Error::new(E_FAIL, format!("Failed to read shader file: {:?}", e)))?;
-        let ps_blob = compile_shader(&user_code, "main", "ps_4_0")?;
+        
+        let ps_blob = compile_shader(&user_code, "main", "ps_4_0")
+            .or_else(|_| compile_shader(&user_code, "PSMain", "ps_4_0"))
+            .or_else(|_| compile_shader(FALLBACK_PS_CODE, "main", "ps_4_0"))?;
+
         let mut pixel_shader = None;
         unsafe {
             let shader_data = std::slice::from_raw_parts(ps_blob.GetBufferPointer() as *const u8, ps_blob.GetBufferSize());
@@ -178,7 +182,8 @@ impl ShaderHost {
 
                             let user_code = std::fs::read_to_string(&reload_state_clone.shader_path);
                             let compile_res = match &user_code {
-                                Ok(code) => compile_shader(code, "main", "ps_4_0"),
+                                Ok(code) => compile_shader(code, "main", "ps_4_0")
+                                    .or_else(|_| compile_shader(code, "PSMain", "ps_4_0")),
                                 Err(_) => compile_shader(FALLBACK_PS_CODE, "main", "ps_4_0"),
                             };
 
