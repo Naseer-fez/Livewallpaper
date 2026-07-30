@@ -1,0 +1,10 @@
+{
+  "enigma_dir": "C:\\Program Files (x86)\\Enigma Virtual Box",
+  "build_dir": "realse",
+  "input_exe": "LiveWallpaper.exe",
+  "output_exe": "LiveWallpaper_bundled.exe",
+  "dlls": [
+    "live_wallpaper_rust.dll",
+    "D3DCompiler_47.dll"
+  ]
+}
