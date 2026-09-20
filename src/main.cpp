@@ -64,7 +64,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     } else {
         sa.lpSecurityDescriptor = NULL;
     }
-    HANDLE hMutex = CreateMutexW(&sa, TRUE, L"Local\\LiveWallpaperEngineUniqueMutex_FEZN");
+    HANDLE hMutex = CreateMutexW(&sa, TRUE, L"Local\\LiveWallpaperEngineUniqueMutex");
     DWORD dwMutexErr = GetLastError();
     if (pSD) LocalFree(pSD);
     if (hMutex == NULL) {

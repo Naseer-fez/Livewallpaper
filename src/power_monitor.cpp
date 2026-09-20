@@ -113,11 +113,14 @@ void PowerMonitor::EvaluatePowerState() {
     if (g_isHeadlessTest) {
         shouldPause = false;
     }
+
+    bool effectiveOccluded = m_isDesktopOccluded;
+
     if (m_pauseCallback) {
         m_pauseCallback(shouldPause);
     }
     if (m_throttleCallback) {
-        m_throttleCallback(m_isDesktopOccluded && !shouldPause);
+        m_throttleCallback(effectiveOccluded && !shouldPause);
     }
 }
 
@@ -133,7 +136,7 @@ static BOOL CALLBACK EnumWindowsOcclusionProc(HWND hWnd, LPARAM lParam) {
 
     wchar_t className[256];
     if (GetClassNameW(hWnd, className, 256) > 0) {
-        if (wcscmp(className, L"WorkerW") == 0 ||
+        if (wcscmp(className, L"TaskbarEngineHoverOverlay") == 0 ||
             wcscmp(className, L"Progman") == 0 ||
             wcscmp(className, L"Shell_TrayWnd") == 0) {
             return TRUE;
@@ -150,6 +153,8 @@ static BOOL CALLBACK EnumWindowsOcclusionProc(HWND hWnd, LPARAM lParam) {
         if (rcWin.left <= pData->rcMonitor.left && rcWin.top <= pData->rcMonitor.top &&
             rcWin.right >= pData->rcMonitor.right && rcWin.bottom >= pData->rcMonitor.bottom) {
             pData->isFullyCovered = true;
+            LOG_INFO("EnumWindowsOcclusionProc: Fully covered by HWND: %p, Class: %ls, Rect: (%d, %d, %d, %d)", 
+                     hWnd, className, rcWin.left, rcWin.top, rcWin.right, rcWin.bottom);
             return FALSE;
         }
 
@@ -157,6 +162,7 @@ static BOOL CALLBACK EnumWindowsOcclusionProc(HWND hWnd, LPARAM lParam) {
             HMONITOR hWinMon = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
             if (hWinMon == pData->hMonitor) {
                 pData->isFullyCovered = true;
+                LOG_INFO("EnumWindowsOcclusionProc: Zoomed by HWND: %p, Class: %ls", hWnd, className);
                 return FALSE;
             }
         }
@@ -216,7 +222,7 @@ void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
     if (hForeground != nullptr) {
         wchar_t className[256];
         if (GetClassNameW(hForeground, className, 256) > 0) {
-            if (wcscmp(className, L"WorkerW") != 0 && wcscmp(className, L"Progman") != 0 && wcscmp(className, L"Shell_TrayWnd") != 0) {
+            if (wcscmp(className, L"TaskbarEngineHoverOverlay") != 0 && wcscmp(className, L"Progman") != 0 && wcscmp(className, L"Shell_TrayWnd") != 0) {
                 RECT rcApp, rcMonitor;
                 GetWindowRect(hForeground, &rcApp);
                 HMONITOR hMonitor = MonitorFromWindow(hForeground, MONITOR_DEFAULTTONEAREST);
@@ -226,6 +232,9 @@ void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
                     if (rcApp.left <= rcMonitor.left && rcApp.top <= rcMonitor.top &&
                         rcApp.right >= rcMonitor.right && rcApp.bottom >= rcMonitor.bottom) {
                         newIsFullscreenAppRunning = true;
+                        if (newIsFullscreenAppRunning != m_isFullscreenAppRunning) {
+                            LOG_INFO("Fullscreen check flipped to TRUE by HWND: %p, Class: %ls", hForeground, className);
+                        }
                     }
                 }
             }
@@ -249,6 +258,9 @@ void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
             notificationState == QUNS_APP ||
             notificationState == QUNS_RUNNING_PLAY_TO) {
             newIsObscured = true;
+            if (newIsObscured != m_isObscured) {
+                LOG_INFO("Obscured check flipped to TRUE by SHQueryUserNotificationState: %d", notificationState);
+            }
         }
     }
 
@@ -263,6 +275,9 @@ void PowerMonitor::CheckForegroundAndIdleStates(int idleTimeoutMinutes) {
     if (newIsDesktopOccluded != m_isDesktopOccluded) {
         m_isDesktopOccluded = newIsDesktopOccluded;
         stateChanged = true;
+        if (newIsDesktopOccluded) {
+            LOG_INFO("Desktop occlusion check flipped to TRUE");
+        }
         LOG_INFO("Desktop occlusion state changed to: %d", m_isDesktopOccluded);
     }
 
