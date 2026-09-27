@@ -84,7 +84,7 @@ bool SwapChainManager::CreateSwapChain(ID3D11Device* device) {
         device,
         m_hWnd,
         &scd,
-        &fsd,
+        NULL,
         NULL,
         &m_swapChain
     );
@@ -101,7 +101,7 @@ bool SwapChainManager::CreateSwapChain(ID3D11Device* device) {
             device,
             m_hWnd,
             &scd,
-            &fsd,
+            NULL,
             NULL,
             &m_swapChain
         );
@@ -112,6 +112,8 @@ bool SwapChainManager::CreateSwapChain(ID3D11Device* device) {
             return false;
         }
     }
+
+    dxgiFactory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_WINDOW_CHANGES | DXGI_MWA_NO_ALT_ENTER);
 
     // Verify the created swap chain has valid dimensions
     DXGI_SWAP_CHAIN_DESC1 actualDesc = {};
@@ -140,13 +142,18 @@ bool SwapChainManager::CreateRenderTargetView(ID3D11Device* device) {
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> backBuffer;
     HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
-    LOG_INFO("CreateRenderTargetView: GetBuffer(0) result = 0x%08X", hr);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        LOG_ERROR("CreateRenderTargetView: GetBuffer(0) failed. HRESULT = 0x%08X", hr);
+        return false;
+    }
 
     hr = device->CreateRenderTargetView(backBuffer.Get(), NULL, &m_renderTargetView);
-    LOG_INFO("CreateRenderTargetView: CreateRenderTargetView result = 0x%08X", hr);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        LOG_ERROR("CreateRenderTargetView: CreateRenderTargetView failed. HRESULT = 0x%08X", hr);
+        return false;
+    }
 
+    LOG_INFO("CreateRenderTargetView: RenderTargetView successfully created: %p", m_renderTargetView.Get());
     return true;
 }
 
@@ -155,8 +162,6 @@ bool SwapChainManager::Resize(ID3D11Device* device, ID3D11DeviceContext* context
     if (width == m_width && height == m_height) return true;
 
     LOG_INFO("Resizing SwapChain from %dx%d to %dx%d...", m_width, m_height, width, height);
-    m_width = width;
-    m_height = height;
 
     if (!m_swapChain) {
         LOG_ERROR("Resize: SwapChain is null.");
@@ -181,7 +186,10 @@ bool SwapChainManager::Resize(ID3D11Device* device, ID3D11DeviceContext* context
         return false;
     }
 
-    return CreateRenderTargetView(device);
+    if (!CreateRenderTargetView(device)) return false;
+    m_width = width;
+    m_height = height;
+    return true;
 }
 
 HRESULT SwapChainManager::Present(int fpsLimit) {
@@ -192,6 +200,13 @@ HRESULT SwapChainManager::Present(int fpsLimit) {
     // Use debug logging for high-frequency frame presentations to avoid spamming the log.
     if (FAILED(hr)) {
         LOG_ERROR("SwapChainManager::Present failed. HRESULT = 0x%08X", hr);
+        if (hr == DXGI_ERROR_DEVICE_REMOVED && m_swapChain) {
+            Microsoft::WRL::ComPtr<ID3D11Device> dev;
+            if (SUCCEEDED(m_swapChain->GetDevice(IID_PPV_ARGS(&dev))) && dev) {
+                HRESULT reason = dev->GetDeviceRemovedReason();
+                LOG_ERROR("SwapChainManager: DXGI Device Removed Reason = 0x%08X", reason);
+            }
+        }
     } else {
         LOG_DEBUG("SwapChainManager::Present succeeded. HRESULT = 0x%08X", hr);
     }

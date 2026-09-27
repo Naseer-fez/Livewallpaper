@@ -14,6 +14,7 @@ public:
     void Hide();
 
     void SetOnPlaylistUpdatedCallback(std::function<void(const std::vector<std::wstring>&, size_t)> cb);
+    HWND GetHWND() const { return m_hWnd; }
 
 private:
     static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);

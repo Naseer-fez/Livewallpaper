@@ -24,15 +24,12 @@ public:
     void RequestResize(int width, int height);
     void RequestRecreate(HWND newHWnd);
     bool IsDetached() const;
+    bool WaitForDetached(DWORD timeoutMs) const;
     void RequestChangeVideo(const std::wstring& path);
 
     void SetPaused(bool paused);
     void SetThrottled(bool throttled);
     void SetFPSLimit(int fpsLimit);
-
-    // Playlist support
-    void SetPlaylist(const std::vector<std::wstring>& playlist, size_t startIndex = 0);
-    void SetRotationInterval(int minutes);
 
 private:
     void ThreadProc();
@@ -48,7 +45,6 @@ private:
     // Component dependencies (split per architecture design)
     std::unique_ptr<DeviceManager> m_deviceManager;
     std::unique_ptr<SwapChainManager> m_swapChainManager;
-    std::unique_ptr<PlaylistManager> m_playlistManager;
     std::unique_ptr<SynchronizationManager> m_syncManager;
     std::unique_ptr<RenderStateMachine> m_stateMachine;
     

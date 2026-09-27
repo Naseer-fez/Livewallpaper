@@ -168,6 +168,10 @@ bool VideoRenderer::InitializeShaders() {
 
 void VideoRenderer::UpdateAspectRatioCB(int textureWidth, int textureHeight, int videoWidth, int videoHeight) {
     if (!m_pDeviceManager || !m_pSwapChainManager || !m_constantBuffer) return;
+    if (videoWidth <= 0 || videoHeight <= 0 || textureWidth <= 0 || textureHeight <= 0 ||
+        m_pSwapChainManager->GetWidth() <= 0 || m_pSwapChainManager->GetHeight() <= 0) {
+        return;
+    }
     auto d3dContext = m_pDeviceManager->GetContext();
 
     float videoAspect = (float)videoWidth / videoHeight;
@@ -241,15 +245,13 @@ HRESULT VideoRenderer::RenderVideoFrame(
 
     UpdateAspectRatioCB(textureWidth, textureHeight, videoWidth, videoHeight);
 
-    if (!m_pipelineBound) {
-        d3dContext->VSSetShader(m_vertexShader.Get(), nullptr, 0);
-        d3dContext->PSSetShader(m_pixelShader.Get(), nullptr, 0);
-        d3dContext->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
-        d3dContext->PSSetSamplers(0, 1, m_samplerState.GetAddressOf());
-        d3dContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        d3dContext->IASetInputLayout(nullptr);
-        m_pipelineBound = true;
-    }
+    d3dContext->VSSetShader(m_vertexShader.Get(), nullptr, 0);
+    d3dContext->PSSetShader(m_pixelShader.Get(), nullptr, 0);
+    d3dContext->VSSetConstantBuffers(0, 1, m_constantBuffer.GetAddressOf());
+    d3dContext->PSSetSamplers(0, 1, m_samplerState.GetAddressOf());
+    d3dContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    d3dContext->IASetInputLayout(nullptr);
+    m_pipelineBound = true;
     
     ID3D11ShaderResourceView* srvs[2] = { pVideoSRV_Y, pVideoSRV_UV };
     LOG_DEBUG("RenderVideoFrame: Binding SRVs: Y = %p, UV = %p", pVideoSRV_Y, pVideoSRV_UV);

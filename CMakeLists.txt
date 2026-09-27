@@ -100,7 +100,6 @@ if(MSVC)
         $<$<CONFIG:Release>:/Ot>
         $<$<CONFIG:Release>:/GL>
         $<$<CONFIG:Release>:/fp:fast>
-        $<$<CONFIG:Release>:/arch:AVX2>
     )
     
     # Linker Optimization Flags (Release Only)
@@ -120,6 +119,12 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_CURRENT_SOURCE_DIR}/live_wallpaper_rust/target/release/live_wallpaper_rust.dll
         $<TARGET_FILE_DIR:LiveWallpaper>/live_wallpaper_rust.dll
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:LiveWallpaper>
+        ${CMAKE_CURRENT_SOURCE_DIR}/LiveWallpaper.exe
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_CURRENT_SOURCE_DIR}/live_wallpaper_rust/target/release/live_wallpaper_rust.dll
+        ${CMAKE_CURRENT_SOURCE_DIR}/live_wallpaper_rust.dll
     COMMENT "Building Rust DLL and copying to output directory"
 )
 

@@ -38,6 +38,7 @@ public:
     int GetVideoHeight() const { return m_videoHeight; }
     int GetTextureWidth() const { return m_videoTextureWidth; }
     int GetTextureHeight() const { return m_videoTextureHeight; }
+    bool IsDeviceLost() const { return m_deviceLost.load(std::memory_order_acquire); }
 
 private:
     void DecodingThreadProc();
@@ -70,6 +71,7 @@ private:
     std::thread m_decodeThread;
     std::atomic<bool> m_runThread{ false };
     std::atomic<bool> m_isPaused{ false };
+    std::atomic<bool> m_deviceLost{ false };
     
     // Shared SPSC lock-free atomic sample queue (max capacity 16 is a power of 2)
     SPSCRingBuffer<Microsoft::WRL::ComPtr<IMFSample>, 16> m_sampleQueue;

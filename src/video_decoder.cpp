@@ -17,6 +17,7 @@ bool VideoDecoder::Initialize(ID3D11Device* pDevice) {
         return false;
     }
     m_pDevice = pDevice;
+    m_deviceLost.store(false, std::memory_order_release);
 
     Microsoft::WRL::ComPtr<ID3D10Multithread> pMultithread;
     HRESULT hr = m_pDevice->QueryInterface(IID_PPV_ARGS(&pMultithread));
@@ -245,6 +246,7 @@ bool VideoDecoder::LoadVideo(const std::wstring& filePath) {
 void VideoDecoder::CloseVideo() {
     m_videoLoaded = false;
     m_runThread = false;
+    m_deviceLost.store(false, std::memory_order_release);
 
     // Flush any pending synchronous ReadSample calls to prevent joining threads from hanging
     if (m_pSourceReader) {
@@ -388,7 +390,6 @@ void VideoDecoder::DecodingThreadProc() {
             
             // Flush decoder pipeline to release DXVA2 buffers and prevent VRAM accumulation
             m_pSourceReader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
-            m_sampleQueue.Clear();
 
             PROPVARIANT var;
             PropVariantInit(&var);
@@ -406,6 +407,17 @@ void VideoDecoder::DecodingThreadProc() {
 
         if (FAILED(hr)) {
             LOG_ERROR("ReadSample failed. HRESULT: 0x%08X", hr);
+            if (hr == MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED ||
+                hr == static_cast<HRESULT>(0xC00D6D60L) ||
+                hr == static_cast<HRESULT>(0xC00D3EA2L) ||
+                hr == DXGI_ERROR_DEVICE_RESET ||
+                hr == DXGI_ERROR_DEVICE_REMOVED) {
+                LOG_WARN("VideoDecoder: Hardware device invalidated or reset (0x%08X). Resetting token & flagging device loss...", hr);
+                if (m_pDeviceManager && m_pDevice) {
+                    m_pDeviceManager->ResetDevice(m_pDevice, m_deviceResetToken);
+                }
+                m_deviceLost.store(true, std::memory_order_release);
+            }
             Timer::PreciseSleep(10.0);
             continue;
         }
@@ -476,6 +488,9 @@ bool VideoDecoder::UpdateFrame(ID3D11DeviceContext* pContext, double& outWaitTim
         }
 
         if (sampleTimeMs < m_currentFrameTimestamp) {
+            if (hasNewFrame && pSelectedSample) {
+                break; // Present final frame before consuming looped sample
+            }
             LOG_INFO("UpdateFrame: Video loop detected. Resetting playback timeline. new sampleTimeMs = %.2f ms, previous = %.2f ms", sampleTimeMs, m_currentFrameTimestamp);
             m_playbackTimeMs = sampleTimeMs;
             m_currentFrameTimestamp = sampleTimeMs;
@@ -606,6 +621,15 @@ bool VideoDecoder::UpdateFrame(ID3D11DeviceContext* pContext, double& outWaitTim
             }
         }
         UINT32 rowPitch = m_videoWidth;
+        if (m_pSourceReader) {
+            Microsoft::WRL::ComPtr<IMFMediaType> pCurrentType;
+            if (SUCCEEDED(m_pSourceReader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &pCurrentType)) && pCurrentType) {
+                UINT32 stride = 0;
+                if (SUCCEEDED(pCurrentType->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride)) && stride > 0) {
+                    rowPitch = stride;
+                }
+            }
+        }
         pContext->UpdateSubresource(
             m_pVideoTexture.Get(),
             0,

@@ -36,6 +36,66 @@ struct VS_OUTPUT {
 };
 """
 
+def convert_atan_calls(text):
+    # Convert 2-argument atan(y, x) to HLSL atan2(y, x)
+    pos = 0
+    while True:
+        m = re.search(r'\batan\s*\(', text[pos:])
+        if not m:
+            break
+        atan_start = pos + m.start()
+        paren_start = pos + m.end() - 1  # index of '('
+        depth = 1
+        comma_idx = -1
+        i = paren_start + 1
+        n = len(text)
+        while i < n and depth > 0:
+            ch = text[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+            elif ch == ',' and depth == 1:
+                comma_idx = i
+            i += 1
+        if depth == 0 and comma_idx != -1:
+            # 2-argument atan -> replace with atan2
+            text = text[:atan_start] + "atan2" + text[atan_start + 4:]
+            pos = atan_start + 5
+        else:
+            pos = paren_start + 1
+    return text
+
+def find_matching_brace(code, open_pos):
+    depth = 1
+    i = open_pos + 1
+    n = len(code)
+    in_line_comment = False
+    in_block_comment = False
+    while i < n:
+        if in_line_comment:
+            if code[i] == '\n':
+                in_line_comment = False
+        elif in_block_comment:
+            if code[i:i+2] == '*/':
+                in_block_comment = False
+                i += 1
+        else:
+            if code[i:i+2] == '//':
+                in_line_comment = True
+                i += 1
+            elif code[i:i+2] == '/*':
+                in_block_comment = True
+                i += 1
+            elif code[i] == '{':
+                depth += 1
+            elif code[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return i
+        i += 1
+    return -1
+
 def convert_glsl_to_hlsl(glsl_code):
     # Keep track of mouse usage
     has_mouse = "iMouse" in glsl_code
@@ -65,14 +125,9 @@ def convert_glsl_to_hlsl(glsl_code):
     code = re.sub(r'\bdFdy\b', 'ddy', code)
 
     # Convert 2-argument atan(y, x) to HLSL atan2(y, x)
-    # Matches atan(expr1, expr2) and replaces with atan2(expr1, expr2)
-    # Handles nested parentheses by matching balanced characters
-    code = re.sub(r'\batan\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)', r'atan2(\1, \2)', code)
+    code = convert_atan_calls(code)
 
     # 4. Handle ShaderToy mainImage entrypoint conversion
-    # Supports different formats: 
-    # void mainImage(out vec4 fragColor, in vec2 fragCoord)
-    # void mainImage(out float4 o, in float2 u) etc.
     main_pattern = r'void\s+mainImage\s*\(\s*out\s+(\w+)\s+(\w+)\s*,\s*in\s+(\w+)\s+(\w+)\s*\)'
     match = re.search(main_pattern, code)
     
@@ -84,12 +139,14 @@ def convert_glsl_to_hlsl(glsl_code):
         hlsl_sig = "float4 main(VS_OUTPUT input) : SV_Target"
         code = re.sub(main_pattern, hlsl_sig, code)
         
-        # We need to inject the coordinate mapping and return statement inside the main body
-        # Let's locate the opening curly brace of the new main function
         sig_index = code.find(hlsl_sig)
         if sig_index != -1:
             brace_index = code.find('{', sig_index)
             if brace_index != -1:
+                close_brace = find_matching_brace(code, brace_index)
+                if close_brace != -1:
+                    code = code[:close_brace] + f"\n    return {color_name};\n" + code[close_brace:]
+
                 # Coordinate mapping logic
                 injection = f"\n    float2 {coord_name} = input.TexCoord * iResolution.xy;"
                 
@@ -104,12 +161,6 @@ def convert_glsl_to_hlsl(glsl_code):
                 
                 # Insert at opening brace
                 code = code[:brace_index + 1] + injection + code[brace_index + 1:]
-                
-                # Replace the closing brace logic with return color_name
-                # Find the very last brace of the file and insert return color_name
-                last_brace = code.rfind('}')
-                if last_brace != -1:
-                    code = code[:last_brace] + f"\n    return {color_name};\n" + code[last_brace:]
     
     # 5. Prepend HLSL constant buffers & header
     full_hlsl = HLSL_HEADER + "\n" + code

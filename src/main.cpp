@@ -11,6 +11,7 @@
 #include <sddl.h>
 #include <cstring>
 #include <mfapi.h>
+#include <shellapi.h>
 #include <atomic>
 
 // Global flag to force WARP software renderer (simulates target machine with no GPU drivers)
@@ -41,6 +42,8 @@ static std::wstring GetCurrentUserSidString() {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     // Single instance check using a named session-local mutex to mitigate cross-session squatting
     SECURITY_ATTRIBUTES sa;
     sa.nLength = sizeof(SECURITY_ATTRIBUTES);
@@ -84,37 +87,50 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 0; // Exit if another instance is already running
     }
 
-    // Validate command line arguments
-    if (lpCmdLine && strlen(lpCmdLine) > 0) {
-        std::string cmdLine = lpCmdLine;
-        size_t start = 0;
-        while (start < cmdLine.length()) {
-            while (start < cmdLine.length() && isspace(cmdLine[start])) {
-                start++;
-            }
-            if (start >= cmdLine.length()) break;
-            size_t end = start;
-            while (end < cmdLine.length() && !isspace(cmdLine[end])) {
-                end++;
-            }
-            std::string token = cmdLine.substr(start, end - start);
-            if (!token.empty() && (token[0] == '-' || token[0] == '/')) {
-                if (token != "--diagnose" && token != "/diagnose" &&
-                    token != "--force-warp" && token != "/force-warp" &&
-                    token != "--test-env" && token != "/test-env") {
-                    LOG_ERROR("Unknown or invalid command line argument: '%s'", token.c_str());
-                    Timer::EndHighResolution();
-                    Utils::ShutdownLogging();
-                    CloseHandle(hMutex);
-                    return -1;
+    // Validate and parse command line arguments robustly
+    bool runDiagnose = false;
+    std::wstring cliWallpaperPath;
+
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+        for (int i = 1; i < argc; ++i) {
+            std::wstring token = argv[i];
+            if (token == L"--diagnose" || token == L"/diagnose") {
+                runDiagnose = true;
+            } else if (token == L"--force-warp" || token == L"/force-warp") {
+                g_forceWARP = true;
+                LOG_WARN("*** FORCE-WARP MODE: Skipping hardware GPU, using WARP software renderer ***");
+            } else if (token == L"--test-env" || token == L"/test-env") {
+                g_forceWARP = true;
+                LOG_WARN("*** TEST-ENV MODE: Simulating fresh target machine (WARP + cleared config) ***");
+                std::wstring configPath = Utils::GetAppDataPath() + L"\\config.ini";
+                DeleteFileW(configPath.c_str());
+                LOG_INFO("Deleted config.ini to simulate fresh environment.");
+            } else if (token == L"--video" || token == L"/video") {
+                if (i + 1 < argc) {
+                    cliWallpaperPath = argv[++i];
                 }
+            } else if (token.rfind(L"--video=", 0) == 0) {
+                cliWallpaperPath = token.substr(8);
+            } else if (token.rfind(L"/video=", 0) == 0) {
+                cliWallpaperPath = token.substr(7);
+            } else if (Utils::ValidateFilePath(token, false, false)) {
+                cliWallpaperPath = token;
+            } else if (!token.empty() && (token[0] == L'-' || token[0] == L'/')) {
+                LOG_ERROR_W(L"Unknown or invalid command line argument: '%ls'", token.c_str());
+                LocalFree(argv);
+                Timer::EndHighResolution();
+                Utils::ShutdownLogging();
+                CloseHandle(hMutex);
+                return -1;
             }
-            start = end;
         }
+        LocalFree(argv);
     }
 
     // Diagnostic mode: run environment report and exit without rendering
-    if (lpCmdLine && (strstr(lpCmdLine, "--diagnose") || strstr(lpCmdLine, "/diagnose"))) {
+    if (runDiagnose) {
         LOG_INFO("Diagnostic mode activated via command line.");
         HRESULT hrDiag = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
         Diagnostics::RunDiagnosticReport();
@@ -123,22 +139,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         Utils::ShutdownLogging();
         CloseHandle(hMutex);
         return 0;
-    }
-
-    // --force-warp: Force WARP software renderer (simulates target machine with no/bad GPU drivers)
-    if (lpCmdLine && (strstr(lpCmdLine, "--force-warp") || strstr(lpCmdLine, "/force-warp"))) {
-        g_forceWARP = true;
-        LOG_WARN("*** FORCE-WARP MODE: Skipping hardware GPU, using WARP software renderer ***");
-    }
-
-    // --test-env: Simulate a brand-new target machine (WARP + fresh config)
-    if (lpCmdLine && (strstr(lpCmdLine, "--test-env") || strstr(lpCmdLine, "/test-env"))) {
-        g_forceWARP = true;
-        LOG_WARN("*** TEST-ENV MODE: Simulating fresh target machine (WARP + cleared config) ***");
-        // Delete the config file to simulate first-run on a new machine
-        std::wstring configPath = Utils::GetAppDataPath() + L"\\config.ini";
-        DeleteFileW(configPath.c_str());
-        LOG_INFO("Deleted config.ini to simulate fresh environment.");
     }
     
     LOG_INFO("WinMain: Initializing COM library (COINIT_APARTMENTTHREADED)...");
@@ -160,7 +160,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         dummyWcx.hInstance = hInstance;
         dummyWcx.lpszClassName = L"Progman";
         if (RegisterClassExW(&dummyWcx) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
-            HWND dummyProgman = CreateWindowExW(0, L"Progman", L"Progman", WS_POPUP, 0, 0, 100, 100, NULL, NULL, hInstance, NULL);
+            int scrW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            int scrH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if (scrW <= 0) scrW = GetSystemMetrics(SM_CXSCREEN);
+            if (scrH <= 0) scrH = GetSystemMetrics(SM_CYSCREEN);
+            HWND dummyProgman = CreateWindowExW(0, L"Progman", L"Progman", WS_POPUP, 0, 0, scrW, scrH, NULL, NULL, hInstance, NULL);
             if (dummyProgman) {
                 LOG_INFO("Created dummy Progman window for headless/testing environment.");
                 WNDCLASSEXW shellWcx = { 0 };
@@ -195,24 +199,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     std::vector<std::wstring> playlist = config.GetPlaylist();
 
     // Check if a wallpaper/shader path was passed via command line argument
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv) {
-        for (int i = 1; i < argc; ++i) {
-            if (argv[i][0] != L'-' && argv[i][0] != L'/') {
-                std::wstring cliPath = argv[i];
-                if (Utils::ValidateFilePath(cliPath)) {
-                    videoPath = cliPath;
-                    LOG_INFO_W(L"WinMain: Loaded wallpaper path from command line: %ls", videoPath.c_str());
-                    config.SetVideoPath(videoPath);
-                    playlist = { videoPath };
-                    config.SetPlaylist(playlist);
-                    config.Save();
-                    break;
-                }
-            }
-        }
-        LocalFree(argv);
+    if (!cliWallpaperPath.empty() && Utils::ValidateFilePath(cliWallpaperPath, false, false)) {
+        videoPath = cliWallpaperPath;
+        LOG_INFO_W(L"WinMain: Loaded wallpaper path from command line: %ls", videoPath.c_str());
+        config.SetVideoPath(videoPath);
+        playlist = { videoPath };
+        config.SetPlaylist(playlist);
+        config.Save();
     }
 
     // Migrate old single video config to playlist if playlist is empty
@@ -394,7 +387,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         });
 
         trayIcon.SetManagePlaylistCallback([&]() {
-            playlistDialog.Show(host.GetHWND(), playlist, currentPlaylistItem);
+            playlistDialog.Show(NULL, playlist, currentPlaylistItem);
         });
 
         trayIcon.SetIntervalCallback([&](int minutes) {
@@ -411,6 +404,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             trayIcon.UpdateFPSLimit(fps);
             renderThread.SetFPSLimit(fps);
             LOG_INFO("FPS limit updated to %d", fps);
+        });
+
+        trayIcon.SetDisplayChangeCallback([&]() {
+            LOG_INFO("Display change detected via TrayIcon. Repositioning wallpaper host.");
+            if (host.GetHWND() && IsWindow(host.GetHWND())) {
+                SendMessageW(host.GetHWND(), WM_DISPLAYCHANGE, 0, 0);
+            }
         });
     }
 
@@ -429,6 +429,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             if (msg.message == WM_QUIT) {
                 goto exit_loop;
             }
+            if (playlistDialog.GetHWND() && IsWindow(playlistDialog.GetHWND()) && IsDialogMessageW(playlistDialog.GetHWND(), &msg)) {
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -442,11 +445,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 
                 // Signal RenderThread to recreate with nullptr to detach D3D11 resources
                 renderThread.RequestRecreate(nullptr);
-                ULONGLONG detachStart = GetTickCount64();
-                while (!renderThread.IsDetached() && (GetTickCount64() - detachStart < 1000)) {
-                    Timer::PreciseSleep(10.0);
-                }
-                if (!renderThread.IsDetached()) {
+                if (!renderThread.WaitForDetached(1000)) {
                     LOG_WARN("RenderThread did not detach D3D11 resources within 1000ms limit.");
                 } else {
                     LOG_INFO("RenderThread successfully detached D3D11 resources.");

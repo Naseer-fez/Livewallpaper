@@ -4,7 +4,6 @@
 #include <algorithm>
 
 RenderThreadController::RenderThreadController() {
-    m_playlistManager = std::make_unique<PlaylistManager>();
     m_syncManager = std::make_unique<SynchronizationManager>();
     m_stateMachine = std::make_unique<RenderStateMachine>();
 }
@@ -21,7 +20,6 @@ bool RenderThreadController::Start(HWND hWnd, const std::wstring& videoPath) {
 
     m_hWnd = hWnd;
     m_videoPath = videoPath;
-    m_playlistManager->SetPlaylist({ videoPath });
     m_syncManager->SetRunning(true);
 
     m_renderThread = std::thread(&RenderThreadController::ThreadProc, this);
@@ -56,6 +54,13 @@ bool RenderThreadController::IsDetached() const {
     return true;
 }
 
+bool RenderThreadController::WaitForDetached(DWORD timeoutMs) const {
+    if (m_syncManager) {
+        return m_syncManager->WaitForDetached(timeoutMs);
+    }
+    return true;
+}
+
 void RenderThreadController::RequestChangeVideo(const std::wstring& path) {
     m_syncManager->RequestChangeVideo(path);
 }
@@ -70,17 +75,6 @@ void RenderThreadController::SetThrottled(bool throttled) {
 
 void RenderThreadController::SetFPSLimit(int fpsLimit) {
     m_syncManager->SetFPSLimit(fpsLimit);
-}
-
-void RenderThreadController::SetPlaylist(const std::vector<std::wstring>& playlist, size_t startIndex) {
-    m_playlistManager->SetPlaylist(playlist, startIndex);
-    if (!playlist.empty()) {
-        m_syncManager->RequestChangeVideo(playlist[startIndex]);
-    }
-}
-
-void RenderThreadController::SetRotationInterval(int minutes) {
-    m_playlistManager->SetRotationInterval(minutes);
 }
 
 bool RenderThreadController::IsShaderFile(const std::wstring& path) {
@@ -167,13 +161,9 @@ void RenderThreadController::ThreadProc() {
     InitializeMediaPipeline(m_hWnd, m_videoPath);
 
     Timer frameRateTimer;
-    Timer deltaTimer; // Used for measuring delta time for playlist updates
-    deltaTimer.Reset();
 
     while (m_syncManager->IsRunning()) {
         frameRateTimer.Reset();
-        double deltaMs = deltaTimer.GetElapsedMilliseconds();
-        deltaTimer.Reset();
 
         // 1. Handle HWND Recreation (Phase 7 - Explorer Recovery)
         HWND targetHWnd = nullptr;
@@ -187,6 +177,7 @@ void RenderThreadController::ThreadProc() {
 
             if (targetHWnd == nullptr) {
                 m_syncManager->SetDetached(true);
+                m_syncManager->SignalDetached();
             } else {
                 m_syncManager->SetDetached(false);
             }
@@ -228,39 +219,7 @@ void RenderThreadController::ThreadProc() {
             }
         }
 
-        // 3. Handle Playlist Rotation
-        if (!m_syncManager->IsPaused() && m_playlistManager->Update(deltaMs)) {
-            std::wstring nextPath = m_playlistManager->GetCurrentTrack();
-            if (nextPath != m_videoPath) {
-                m_videoPath = nextPath;
-                LOG_INFO_W(L"RenderThreadController: Rotating playlist to: %ls", m_videoPath.c_str());
-                m_screenCleared = false;
-
-                if (m_shaderHost) {
-                    m_shaderBridge->ShutdownShaderHost(m_shaderHost);
-                    m_shaderHost = nullptr;
-                }
-                m_decoder->Shutdown();
-
-                if (m_deviceManager->GetDevice() && !m_videoPath.empty()) {
-                    if (IsShaderFile(m_videoPath)) {
-                        if (m_shaderBridge->Load()) {
-                            wchar_t errBuf[1024] = { 0 };
-                            HRESULT hr = m_shaderBridge->InitShaderHost(m_deviceManager->GetDevice(), m_deviceManager->GetContext(), m_videoPath, errBuf, 1024, &m_shaderHost);
-                            if (FAILED(hr)) {
-                                LOG_ERROR_W(L"Failed to initialize Rust Shader Host. HR: 0x%08X. Error: %ls", hr, errBuf);
-                            }
-                        }
-                    } else {
-                        if (m_decoder->Initialize(m_deviceManager->GetDevice())) {
-                            m_decoder->LoadVideo(m_videoPath);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Handle Resizing
+        // 3. Handle Resizing
         int newWidth = 0, newHeight = 0;
         bool resizeNeeded = m_syncManager->CheckResize(newWidth, newHeight);
         if (resizeNeeded && m_deviceManager->GetDevice()) {
@@ -269,7 +228,7 @@ void RenderThreadController::ThreadProc() {
 
         ID3D10Multithread* pMultithread = m_pMultithread.Get();
 
-        // 5. Pause & Throttle Checks
+        // 4. Pause & Throttle Checks
         bool isPaused = m_syncManager->IsPaused();
         bool isThrottled = m_syncManager->IsThrottled();
         if (m_decoder && !m_shaderHost) {
@@ -290,8 +249,8 @@ void RenderThreadController::ThreadProc() {
         }
 
         if (isThrottled) {
-            // Drop to 1 FPS when wallpaper is occluded by normal windows
-            Timer::PreciseSleep(1000.0);
+            // Drop to 1 FPS when wallpaper is occluded by normal windows; wake immediately on events
+            WaitForSingleObject(m_syncManager->GetWakeEvent(), 1000);
         }
 
         // 6. Update and Render Frame
@@ -301,16 +260,18 @@ void RenderThreadController::ThreadProc() {
         bool forceRedraw = recreateNeeded || changeVideoNeeded || resizeNeeded;
 
         // Update state machine state
+        bool decoderDeviceLost = m_decoder && m_decoder->IsDeviceLost();
         RenderState nextState = m_stateMachine->DetermineNextState(
             m_syncManager->IsRunning(),
             isPaused,
             m_hWnd != nullptr,
             IsShaderFile(m_videoPath),
             m_decoder->IsVideoLoaded(),
-            !deviceValid
+            !deviceValid || decoderDeviceLost
         );
         m_stateMachine->TransitionTo(nextState);
 
+        double waitTimeMs = 0.0;
         if (deviceValid) {
             if (m_shaderHost) {
                 POINT ptCursor = { 0 };
@@ -332,7 +293,7 @@ void RenderThreadController::ThreadProc() {
                 if (pMultithread) pMultithread->Leave();
                 frameUpdated = true;
             } else if (m_decoder->IsVideoLoaded()) {
-                double waitTimeMs = 0.0;
+                waitTimeMs = 0.0;
                 if (pMultithread) pMultithread->Enter();
                 frameUpdated = m_decoder->UpdateFrame(m_deviceManager->GetContext(), waitTimeMs);
 
@@ -363,8 +324,8 @@ void RenderThreadController::ThreadProc() {
         }
 
         // 7. Device Loss Recovery
-        if (!deviceValid || FAILED(hrPresent)) {
-            if (hrPresent == DXGI_ERROR_DEVICE_REMOVED || hrPresent == DXGI_ERROR_DEVICE_RESET) {
+        if (!deviceValid || FAILED(hrPresent) || decoderDeviceLost) {
+            if (hrPresent == DXGI_ERROR_DEVICE_REMOVED || hrPresent == DXGI_ERROR_DEVICE_RESET || decoderDeviceLost) {
                 LOG_WARN("RenderThreadController: Device loss detected. Triggering recovery...");
                 m_syncManager->RequestRecreate(m_hWnd);
                 Timer::PreciseSleep(500.0);
@@ -379,6 +340,9 @@ void RenderThreadController::ThreadProc() {
             if (elapsedMs < targetFrameTimeMs) {
                 Timer::PreciseSleep(targetFrameTimeMs - elapsedMs);
             }
+        } else if (!frameUpdated && waitTimeMs <= 0.0) {
+            // Fallback sleep to prevent 100% CPU core spin when detached, recovering, or missing media
+            Timer::PreciseSleep(30.0);
         }
     }
 

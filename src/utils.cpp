@@ -2,6 +2,7 @@
 #include <shlobj.h>
 #include <knownfolders.h>
 #include <cstdio>
+#include <share.h>
 #include <ctime>
 #include <vector>
 #include <filesystem>
@@ -85,6 +86,25 @@ static const wchar_t* GetLevelStringW(LogLevel level) {
     return L"UNKNOWN";
 }
 
+static void CheckRuntimeLogRotation(const std::wstring& logPath) {
+    static uint32_t s_logCount = 0;
+    if (++s_logCount >= 1000) {
+        s_logCount = 0;
+        WIN32_FILE_ATTRIBUTE_DATA fileInfo;
+        if (GetFileAttributesExW(logPath.c_str(), GetFileExInfoStandard, &fileInfo)) {
+            LARGE_INTEGER fileSize;
+            fileSize.HighPart = fileInfo.nFileSizeHigh;
+            fileSize.LowPart = fileInfo.nFileSizeLow;
+            if (fileSize.QuadPart > 2 * 1024 * 1024) { // > 2MB
+                std::wstring dir = GetAppDataPath();
+                std::wstring backupPath = (!dir.empty() ? (dir + L"\\log.bak") : L"log.bak");
+                DeleteFileW(backupPath.c_str());
+                MoveFileW(logPath.c_str(), backupPath.c_str());
+            }
+        }
+    }
+}
+
 void Log(LogLevel level, const char* format, ...) {
 #ifndef _DEBUG
     if (level == LogLevel::Debug) return;
@@ -112,14 +132,18 @@ void Log(LogLevel level, const char* format, ...) {
     va_end(args);
 
     // Output to debug console
-    char debugMsg[1024];
-    sprintf_s(debugMsg, "[%s] [%s] %s\n", timeStr, GetLevelString(level), buf.data());
-    OutputDebugStringA(debugMsg);
+    std::string debugMsg = "[" + std::string(timeStr) + "] [" + GetLevelString(level) + "] " + buf.data() + "\n";
+    OutputDebugStringA(debugMsg.c_str());
 
     // Write to file
     std::wstring logPath = GetLogFilePath();
+    CheckRuntimeLogRotation(logPath);
     FILE* file = nullptr;
-    if (_wfopen_s(&file, logPath.c_str(), L"a") == 0 && file) {
+    for (int retry = 0; retry < 5 && !file; ++retry) {
+        file = _wfsopen(logPath.c_str(), L"a", _SH_DENYNO);
+        if (!file) Sleep(2);
+    }
+    if (file) {
         fprintf(file, "[%s] [%s] %s\n", timeStr, GetLevelString(level), buf.data());
         fclose(file);
     }
@@ -164,16 +188,20 @@ void LogW(LogLevel level, const wchar_t* format, ...) {
     }
 
     // Output to debug console
-    wchar_t debugMsg[1024];
-    swprintf_s(debugMsg, L"[%ls] [%ls] %ls\n", timeStr, GetLevelStringW(level), buf.data());
-    OutputDebugStringW(debugMsg);
+    std::wstring debugMsgW = L"[" + std::wstring(timeStr) + L"] [" + GetLevelStringW(level) + L"] " + buf.data() + L"\n";
+    OutputDebugStringW(debugMsgW.c_str());
 
     // Write to file as UTF-8 narrow stream
-    std::wstring logPath = GetLogFilePath();
-    FILE* file = nullptr;
-    if (_wfopen_s(&file, logPath.c_str(), L"a") == 0 && file) {
-        fprintf(file, "[%s] [%s] %s\n", timeStrA, GetLevelString(level), utf8Buf.data());
-        fclose(file);
+    std::wstring logPathW = GetLogFilePath();
+    CheckRuntimeLogRotation(logPathW);
+    FILE* fileW = nullptr;
+    for (int retry = 0; retry < 5 && !fileW; ++retry) {
+        fileW = _wfsopen(logPathW.c_str(), L"a", _SH_DENYNO);
+        if (!fileW) Sleep(2);
+    }
+    if (fileW) {
+        fprintf(fileW, "[%s] [%s] %s\n", timeStrA, GetLevelString(level), utf8Buf.data());
+        fclose(fileW);
     }
 
     LeaveCriticalSection(&g_LogCriticalSection);

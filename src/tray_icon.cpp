@@ -41,13 +41,14 @@ bool TrayIcon::Initialize(HINSTANCE hInstance) {
 
     RegisterClassExW(&wcx);
 
-    // Create a message-only window
+    // Create a hidden top-level window to receive broadcast messages
     m_hWnd = CreateWindowExW(
         0,
         L"LiveWallpaperTrayClass",
         L"LiveWallpaperTray",
-        0, 0, 0, 0, 0,
-        HWND_MESSAGE, NULL, hInstance, this
+        WS_POPUP,
+        0, 0, 0, 0,
+        NULL, NULL, hInstance, this
     );
 
     if (!m_hWnd) {
@@ -337,6 +338,12 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARA
     }
 
     switch (message) {
+        case WM_DISPLAYCHANGE:
+            if (pThis && pThis->m_onDisplayChange) {
+                pThis->m_onDisplayChange();
+            }
+            return 0;
+
         case WM_TRAYICON:
             if (LOWORD(lParam) == WM_RBUTTONUP) {
                 if (pThis) {
@@ -347,6 +354,10 @@ LRESULT CALLBACK TrayIcon::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARA
     }
 
     return DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
+void TrayIcon::SetDisplayChangeCallback(std::function<void()> cb) {
+    m_onDisplayChange = cb;
 }
 
 void TrayIcon::RecreateTrayIcon() {

@@ -58,7 +58,7 @@ float4 main(VS_OUTPUT input) : SV_TARGET {
     // 1. Gravitational Black Hole distortion toward mouse position
     float distToMouse = length(uv - mouseUV);
     float distortion = 0.04 / (distToMouse + 0.08);
-    float2 warpedUV = uv + normalize(uv - mouseUV + 0.0001) * distortion;
+    float2 warpedUV = uv + (distToMouse > 0.0001 ? ((uv - mouseUV) / distToMouse) : float2(0, 0)) * distortion;
 
     // 2. Cosmic Nebula FBM Layering
     float t = i_time * 0.15;

@@ -17,6 +17,9 @@ PlaylistDialog::~PlaylistDialog() {
     if (m_hWnd && IsWindow(m_hWnd)) {
         DestroyWindow(m_hWnd);
     }
+    if (m_hInstance) {
+        UnregisterClassW(L"LiveWallpaperPlaylistDialogClass", m_hInstance);
+    }
 }
 
 bool PlaylistDialog::Initialize(HINSTANCE hInstance) {
@@ -123,9 +126,7 @@ LRESULT CALLBACK PlaylistDialog::WndProc(HWND hWnd, UINT message, WPARAM wParam,
                     DeleteObject(pThis->m_hFont);
                     pThis->m_hFont = nullptr;
                 }
-                if (pThis->m_hInstance) {
-                    UnregisterClassW(L"LiveWallpaperPlaylistDialogClass", pThis->m_hInstance);
-                }
+                pThis->m_hWnd = nullptr;
                 return 0;
         }
     }

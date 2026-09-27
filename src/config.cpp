@@ -32,7 +32,7 @@ bool Config::Load() {
     m_playlist.clear();
     if (!playlistStr.empty()) {
         size_t start = 0;
-        size_t end = playlistStr.find(L'|');
+        size_t end = playlistStr.find_first_of(L"|,");
         while (end != std::wstring::npos) {
             std::wstring item = playlistStr.substr(start, end - start);
             if (!item.empty()) {
@@ -43,7 +43,7 @@ bool Config::Load() {
                 }
             }
             start = end + 1;
-            end = playlistStr.find(L'|', start);
+            end = playlistStr.find_first_of(L"|,", start);
         }
         std::wstring lastItem = playlistStr.substr(start);
         if (!lastItem.empty()) {

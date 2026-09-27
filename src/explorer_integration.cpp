@@ -107,12 +107,13 @@ bool ExplorerIntegration::FindWorkerW() {
         m_useLegacyWorkerW = false;
         LOG_WARN("FindWorkerW: Fallback to Progman triggered. parentOfShell == progman. Target HWND = %p. assigned dedicated WorkerW", m_hWorkerW);
     } else {
-        HWND workerW = FindWindowExW(NULL, NULL, L"WorkerW", NULL);
+        HWND workerW = FindWindowExW(NULL, parentOfShell, L"WorkerW", NULL);
         while (workerW) {
-            LOG_DEBUG("FindWorkerW: Enumerating WorkerW (Pass 2) = %p", workerW);
-            if (workerW != parentOfShell && !FindWindowExW(workerW, NULL, L"SHELLDLL_DefView", NULL)) {
+            DWORD shellPid = 0, workerPid = 0;
+            GetWindowThreadProcessId(progman, &shellPid);
+            GetWindowThreadProcessId(workerW, &workerPid);
+            if (shellPid == workerPid && !FindWindowExW(workerW, NULL, L"SHELLDLL_DefView", NULL)) {
                 wallpaperWorkerW = workerW;
-                LOG_INFO("FindWorkerW: Found empty WorkerW for wallpaper injection: %p", workerW);
                 break;
             }
             workerW = FindWindowExW(NULL, workerW, L"WorkerW", NULL);
@@ -127,7 +128,7 @@ bool ExplorerIntegration::FindWorkerW() {
             m_hWorkerW = progman;
             m_hShellDefView = NULL;
             m_useLegacyWorkerW = false;
-            LOG_WARN("FindWorkerW: Fallback to Progman triggered (no empty WorkerW). Target HWND = %p. assigned dedicated WorkerW", m_hWorkerW);
+            LOG_WARN("FindWorkerW: Fallback to Progman triggered. Target HWND = %p. assigned dedicated WorkerW", m_hWorkerW);
         }
     }
 
@@ -153,11 +154,25 @@ bool ExplorerIntegration::CreateHostWindow(HINSTANCE hInstance) {
         LOG_INFO("CreateHostWindow: Registered window class 'LiveWallpaperHostClass'.");
     }
 
-    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    int cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    int cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-    LOG_INFO("CreateHostWindow: Virtual screen metrics: x=%d, y=%d, width=%d, height=%d", x, y, cx, cy);
+    int x = 0, y = 0, cx = 0, cy = 0;
+    if (m_hWorkerW) {
+        RECT rcParent;
+        GetClientRect(m_hWorkerW, &rcParent);
+        x = 0;
+        y = 0;
+        cx = rcParent.right - rcParent.left;
+        cy = rcParent.bottom - rcParent.top;
+        if (cx <= 0 || cy <= 0) {
+            cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        }
+    } else {
+        x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    }
+    LOG_INFO("CreateHostWindow: Target window metrics: x=%d, y=%d, width=%d, height=%d", x, y, cx, cy);
 
     DWORD style = WS_POPUP | WS_VISIBLE;
     if (m_hWorkerW) {
@@ -190,10 +205,24 @@ bool ExplorerIntegration::InjectIntoDesktop() {
         LOG_INFO("InjectIntoDesktop: SetParent completed. Previous parent = %p, New parent = %p", prevParent, GetParent(m_hWnd));
     }
 
-    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    int cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-    int cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    int x = 0, y = 0, cx = 0, cy = 0;
+    if (m_hWorkerW) {
+        RECT rcParent;
+        GetClientRect(m_hWorkerW, &rcParent);
+        x = 0;
+        y = 0;
+        cx = rcParent.right - rcParent.left;
+        cy = rcParent.bottom - rcParent.top;
+        if (cx <= 0 || cy <= 0) {
+            cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        }
+    } else {
+        x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    }
 
     HWND hWndInsertAfter = HWND_BOTTOM;
     if (!m_useLegacyWorkerW && m_hShellDefView) {
@@ -213,10 +242,10 @@ bool ExplorerIntegration::NeedsRecovery() {
     if (m_isShuttingDown.load()) {
         return false;
     }
-    if (!m_hWorkerW) {
-        return !IsWindow(m_hWnd);
-    }
     HWND progman = FindWindowW(L"Progman", NULL);
+    if (!m_hWorkerW) {
+        return (progman != nullptr) || !IsWindow(m_hWnd);
+    }
     if (!progman || !IsWindow(m_hWnd) || !IsWindow(m_hWorkerW)) {
         return true;
     }
@@ -244,6 +273,10 @@ LRESULT CALLBACK ExplorerIntegration::WndProc(HWND hWnd, UINT message, WPARAM wP
     }
 
     switch (message) {
+        case WM_CLOSE:
+            DestroyWindow(hWnd);
+            return 0;
+
         case WM_DESTROY:
             if (pThis && (pThis->m_isRecovering.load() || pThis->m_isShuttingDown.load())) {
                 LOG_INFO("ExplorerIntegration window destroyed due to recovery or shutdown.");
@@ -257,10 +290,24 @@ LRESULT CALLBACK ExplorerIntegration::WndProc(HWND hWnd, UINT message, WPARAM wP
             
         case WM_DISPLAYCHANGE: {
             LOG_INFO("Display change detected. Resizing wallpaper host window.");
-            int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
-            int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
-            int cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-            int cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            int x = 0, y = 0, cx = 0, cy = 0;
+            if (pThis && pThis->m_hWorkerW) {
+                RECT rcParent;
+                GetClientRect(pThis->m_hWorkerW, &rcParent);
+                x = 0;
+                y = 0;
+                cx = rcParent.right - rcParent.left;
+                cy = rcParent.bottom - rcParent.top;
+                if (cx <= 0 || cy <= 0) {
+                    cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                    cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                }
+            } else {
+                x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+                y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                cx = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                cy = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            }
 
             HWND hWndInsertAfter = HWND_BOTTOM;
             if (pThis && !pThis->m_useLegacyWorkerW && pThis->m_hShellDefView) {

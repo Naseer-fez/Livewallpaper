@@ -100,7 +100,8 @@ public:
     size_t Size() const {
         const size_t writeIdx = m_writeIndex.load(std::memory_order_relaxed);
         const size_t readIdx = m_readIndex.load(std::memory_order_relaxed);
-        return (writeIdx >= readIdx) ? (writeIdx - readIdx) : 0;
+        const size_t diff = writeIdx - readIdx;
+        return (diff <= Capacity) ? diff : 0;
     }
 
     bool IsEmpty() const {

@@ -22,6 +22,7 @@ public:
     void SetNextVideoCallback(std::function<void()> cb);
     void SetIntervalCallback(std::function<void(int)> cb);
     void SetFPSLimitCallback(std::function<void(int)> cb);
+    void SetDisplayChangeCallback(std::function<void()> cb);
 
     void UpdatePauseState(bool isPaused);
     void UpdateRotationInterval(int minutes);
@@ -53,4 +54,5 @@ private:
     std::function<void()> m_onNextVideo;
     std::function<void(int)> m_onSetInterval;
     std::function<void(int)> m_onSetFPSLimit;
+    std::function<void()> m_onDisplayChange;
 };

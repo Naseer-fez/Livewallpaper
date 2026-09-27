@@ -3,6 +3,7 @@
 #include <string>
 #include <atomic>
 #include <memory>
+#include <cstdint>
 #include "spsc_ring_buffer.h"
 
 struct PathMessage {
@@ -49,6 +50,12 @@ public:
     // Clear everything
     void Clear();
 
+    // Event-driven synchronization
+    void Wake();
+    HANDLE GetWakeEvent() const;
+    void SignalDetached();
+    bool WaitForDetached(DWORD timeoutMs);
+
 private:
     std::atomic<bool> m_runThread{ false };
     std::atomic<bool> m_isPaused{ false };
@@ -56,12 +63,14 @@ private:
     std::atomic<int> m_fpsLimit{ 60 };
 
     std::atomic<bool> m_resizeRequested{ false };
-    std::atomic<int> m_newWidth{ 0 };
-    std::atomic<int> m_newHeight{ 0 };
+    std::atomic<uint64_t> m_newDimensions{ 0 };
 
     std::atomic<bool> m_recreateRequested{ false };
     std::atomic<HWND> m_newHWnd{ nullptr };
     std::atomic<bool> m_isDetached{ false };
+
+    HANDLE m_hWakeEvent = nullptr;
+    HANDLE m_hDetachedEvent = nullptr;
 
     // SPSC Lock-free Queue for path updates
     SPSCRingBuffer<std::unique_ptr<PathMessage>, 16> m_pathQueue;

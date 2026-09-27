@@ -35,7 +35,7 @@ bool FFIShaderBridge::Load() {
             }
 
             // Exclusively load from the application directory, restricting dependency searches there too
-            m_rustDll = LoadLibraryExW(dllPath.c_str(), NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
+            m_rustDll = LoadLibraryExW(dllPath.c_str(), NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
         }
     }
 

@@ -124,8 +124,7 @@ impl ShaderHost {
             .map_err(|e| Error::new(E_FAIL, format!("Failed to read shader file: {:?}", e)))?;
         
         let ps_blob = compile_shader(&user_code, "main", "ps_4_0")
-            .or_else(|_| compile_shader(&user_code, "PSMain", "ps_4_0"))
-            .or_else(|_| compile_shader(FALLBACK_PS_CODE, "main", "ps_4_0"))?;
+            .or_else(|_| compile_shader(&user_code, "PSMain", "ps_4_0"))?;
 
         let mut pixel_shader = None;
         unsafe {
@@ -312,19 +311,17 @@ impl ShaderHost {
             self.context.RSSetViewports(Some(&[viewport]));
             self.context.OMSetRenderTargets(Some(&[Some(rtv.clone())]), None);
 
-            // Set shaders and buffers if pipeline state has changed or not yet bound
-            if !self.pipeline_bound {
-                self.context.VSSetShader(&self.vertex_shader, None);
-                if let Some(ps) = &self.pixel_shader {
-                    self.context.PSSetShader(ps, None);
-                }
-                self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
-                self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
-
-                self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                self.context.IASetInputLayout(None);
-                self.pipeline_bound = true;
+            // Set shaders and buffers unconditionally every frame
+            self.context.VSSetShader(&self.vertex_shader, None);
+            if let Some(ps) = &self.pixel_shader {
+                self.context.PSSetShader(ps, None);
             }
+            self.context.VSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
+            self.context.PSSetConstantBuffers(0, Some(&[Some(self.constant_buffer.clone())]));
+
+            self.context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.context.IASetInputLayout(None);
+            self.pipeline_bound = true;
 
             // Draw fullscreen quad (1 triangle SV_VertexID layout)
             self.context.Draw(3, 0);
@@ -416,7 +413,7 @@ unsafe fn write_error_to_buffer(err_msg: &str, out_error_buffer: *mut u16, error
 /// The caller must ensure that `device_raw`, `context_raw`, `shader_path_utf16`,
 /// `out_error_buffer`, and `out_host` are valid, properly aligned, and live pointers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn init_shader_host(
+pub unsafe extern "system" fn init_shader_host(
     device_raw: *mut c_void,
     context_raw: *mut c_void,
     shader_path_utf16: *const u16,
@@ -489,7 +486,7 @@ pub unsafe extern "C" fn init_shader_host(
 /// and `rtv_raw` points to a valid ID3D11RenderTargetView. If `audio_len` is greater
 /// than 0, `audio_data_ptr` must point to a valid array of floats of at least that size.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn render_shader_frame(
+pub unsafe extern "system" fn render_shader_frame(
     host_ptr: *mut ShaderHost,
     rtv_raw: *mut c_void,
     width: u32,
@@ -545,7 +542,7 @@ pub unsafe extern "C" fn render_shader_frame(
 /// previously returned by `init_shader_host`, and must not use `host_ptr` after
 /// calling this function.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn shutdown_shader_host(host_ptr: *mut ShaderHost) -> HRESULT {
+pub unsafe extern "system" fn shutdown_shader_host(host_ptr: *mut ShaderHost) -> HRESULT {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if host_ptr.is_null() {
             return E_POINTER;

@@ -213,4 +213,31 @@ TEST(LiveWallpaperTests, RenderStateMachineTransitions) {
         false  // isDeviceLost
     );
     EXPECT_EQ(s, RenderState::Idle);
+
+    // Recreating when decoder reports device lost during active video playback
+    s = rsm.DetermineNextState(
+        true,  // isRunning
+        false, // isPaused
+        true,  // hasHWnd
+        false, // isShader
+        true,  // isDecoderLoaded
+        true   // isDeviceLost
+    );
+    EXPECT_EQ(s, RenderState::Recreating);
 }
+
+TEST(LiveWallpaperTests, SPSCRingBufferWrapAround) {
+    SPSCRingBuffer<int, 4> queue;
+    for (int cycle = 0; cycle < 100; ++cycle) {
+        EXPECT_TRUE(queue.IsEmpty());
+        EXPECT_EQ(queue.Size(), 0);
+        EXPECT_TRUE(queue.Push(cycle));
+        EXPECT_EQ(queue.Size(), 1);
+        int out = -1;
+        EXPECT_TRUE(queue.Pop(out));
+        EXPECT_EQ(out, cycle);
+        EXPECT_EQ(queue.Size(), 0);
+        EXPECT_TRUE(queue.IsEmpty());
+    }
+}
+

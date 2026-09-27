@@ -13,11 +13,11 @@ struct VS_OUTPUT {
 };
 
 float4 main(VS_OUTPUT input) : SV_TARGET {
-    float2 uv = (input.UV - 0.5);
+    float2 uv = float2(input.UV.x - 0.5, -(input.UV.y - 0.5));
     uv.x *= i_resolution.z; // Aspect ratio correction
 
     // Mouse interactive offset (-0.5 to 0.5)
-    float2 mouseOffset = (i_mouse.xy / i_resolution.xy) - 0.5;
+    float2 mouseOffset = float2(i_mouse.x / i_resolution.x - 0.5, -(i_mouse.y / i_resolution.y - 0.5));
     bool isClick = i_mouse.z > 0.5;
 
     // Camera perspective projection for 3D ground grid
